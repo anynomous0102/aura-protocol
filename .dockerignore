@@ -1,0 +1,12 @@
+.git
+.venv
+frontend/node_modules
+frontend/dist
+backend/.env
+backend/__pycache__
+backend/chroma_db
+backend/aura_network.db
+backend/data
+**/*.pyc
+**/__pycache__
+*.log

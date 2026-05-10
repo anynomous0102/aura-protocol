@@ -1,0 +1,17 @@
+fastapi==0.136.1
+uvicorn[standard]==0.46.0
+python-dotenv==1.2.1
+python-multipart==0.0.27
+requests==2.32.5
+httpx==0.28.1
+python-jose==3.5.0
+eth-account==0.13.7
+kademlia==2.2.3
+psutil==7.2.2
+google-generativeai==0.8.6
+langchain-community==0.4.1
+langchain-text-splitters==1.1.0
+langchain-chroma==1.0.0
+langchain-huggingface==1.2.0
+sentence-transformers==5.4.1
+pypdf==6.10.2

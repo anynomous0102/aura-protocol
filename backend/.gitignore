@@ -1,0 +1,23 @@
+# Secrets
+*.db
+*.sqlite
+*.sqlite3
+.env
+
+# Python specific ignores
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+__pycache__/
+*.sqlite3
+*.bin
+.env.example
+
+# Persistent runtime data for Docker/local server
+data/
+docs/
+chroma_db/
+aura_network.db
