@@ -219,7 +219,7 @@ export default function App() {
   }, [clearAccessToken]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setIsAppLoading(false), 850);
+    const timer = window.setTimeout(() => setIsAppLoading(false), 2200);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -2619,7 +2619,9 @@ export default function App() {
           white-space: nowrap;
           border-right: 3px solid currentColor;
           font-family: 'Courier New', Courier, monospace;
+          box-sizing: content-box;
           width: 0;
+          padding-right: 0.16em;
           font-size: 4rem;
           font-weight: 700;
           color: var(--t1); 
@@ -2632,8 +2634,8 @@ export default function App() {
           color: var(--gold); 
         }
         @keyframes aura-typing {
-          from { width: 0ch; }
-          to { width: 4.2ch; }
+          from { width: 0; }
+          to { width: 5ch; }
         }
         @keyframes aura-blink {
           0%, 100% { border-color: transparent; }

@@ -878,3 +878,142 @@ Two temporary MVP exceptions currently exist and should be tracked:
 - Redis is optional by default so local and MVP deployments can boot without a managed Redis endpoint.
 
 These exceptions are operationally useful, but they should not become permanent production defaults.
+
+## 19. Completion Roadmap To 100%
+
+This section distills the AURA completion prompt into a practical execution plan. It should be used as a roadmap for future focused coding sessions. Each item should be implemented as its own small change set, with tests and verification, rather than as one large rewrite.
+
+### 19.1 Current Completion Gaps
+
+The current system is operational as an MVP, but these pillars remain incomplete or only partially implemented:
+
+- BYOC routing has basic fallback behavior, but not multi-objective scoring, fault-diverse top-K selection, hedged dispatch, or consensus aggregation.
+- P2P is currently broker-to-libp2p oriented, but not a full Kademlia DHT, Vivaldi coordinate, and ANP negotiation stack.
+- ZKML verification needs a production receipt interface, sidecar verification path, and reputation penalty behavior.
+- AGORA healing needs the full DOM pruning, validation cascade, and healing-memory workflow.
+- AuraCredit smart-contract integration is not yet wired into backend ledger services.
+- CI/CD needs a full GitHub Actions pipeline with linting, tests, Docker validation, and security scanning.
+- Kubernetes production manifests are not yet present.
+- Integration tests exist, but broader real-flow coverage is still needed.
+
+### 19.2 Six Completion Pillars
+
+The recommended completion order is:
+
+1. BYOC Routing
+   - File: `backend/app/services/router.py`
+   - Add scored endpoint selection, provider/region diversity, parallel dispatch, hedged request behavior, consensus aggregation, key rotation, and routing decision persistence.
+
+2. P2P Full Stack
+   - Files: `backend/app/workers/p2p_node.py`, `backend/app/services/p2p_protocol.py`
+   - Add Kademlia routing, Vivaldi latency coordinates, structured gossip, ANP contract-net negotiation, and graceful worker shutdown.
+
+3. ZKML Verifier
+   - File: `backend/app/services/zk_verifier.py`
+   - Add receipt models, verifier sidecar calls, stub acceptance tracking, pending verification state, expired-job handling, and reputation penalties.
+
+4. AGORA DOM Healer
+   - File: `backend/app/services/agora_healer.py`
+   - Add DOM pruning, selector synthesis, validation cascade, Redis-backed warm start, and healing memory updates.
+
+5. AuraCredit and Web3 Ledger
+   - Files: `contracts/AuraCredit.sol`, `backend/app/services/credit_ledger.py`
+   - Add ERC-20-style compute credits, utilisation-based price updates, node slashing, and backend ledger sync.
+
+6. CI/CD, Kubernetes, and Integration Tests
+   - Files: `.github/workflows/ci.yml`, `k8s/`, `tests/`
+   - Add lint/type/test/build/security jobs, deployment manifests, network policies, and real integration coverage.
+
+### 19.3 Completion Database Tables
+
+The eventual production schema should include or preserve these tables:
+
+- `zkml_receipts`
+- `healing_memory`
+- `routing_decisions`
+- `oapin_ledger`
+- `sentinel_patch_log`
+
+The `sentinel_patch_log` table should be treated as insert-only audit history. Application code should never update or delete rows from it.
+
+### 19.4 Completion Checklist
+
+Use this checklist to track progress after each module:
+
+BYOC routing:
+
+- [ ] Capability and routing decision models are complete.
+- [ ] Multi-factor scoring formula is implemented.
+- [ ] Fault-diverse top-K selection works.
+- [ ] Parallel dispatch and hedged cancellation work.
+- [ ] Consensus aggregation works.
+- [ ] EMA latency updates are written to Redis.
+- [ ] KeyPool rotates provider keys and penalty-boxes 429 keys.
+- [ ] Routing decisions persist asynchronously.
+
+P2P full stack:
+
+- [ ] Kademlia buckets and XOR-distance ordering work.
+- [ ] Iterative node lookup works.
+- [ ] Vivaldi coordinate updates work.
+- [ ] ANP sealed-bid negotiation works.
+- [ ] P2P worker runs gossip, heartbeat, and ANP listener tasks.
+- [ ] Worker shutdown drains cleanly.
+- [ ] Worker logs structured JSON.
+
+ZKML verifier:
+
+- [ ] Receipt schema is complete.
+- [ ] Stub, Halo2, and PLONK proof branches exist.
+- [ ] Sidecar failure returns pending verification.
+- [ ] Reputation penalties are atomic and floor at zero.
+- [ ] Expired pending receipts become unverifiable or penalized.
+- [ ] Commitment computation is deterministic.
+
+AGORA healer:
+
+- [ ] DOM pruning removes unsafe and irrelevant markup.
+- [ ] Selector synthesis path exists.
+- [ ] Validation cascade runs in order.
+- [ ] Redis healing memory warm-starts successful selectors.
+- [ ] Full heal cycle has timeout handling.
+- [ ] Healing results are persisted or recorded.
+
+AuraCredit:
+
+- [ ] Smart contract supports compute credit transfer.
+- [ ] Protocol fee is handled.
+- [ ] Price oracle update path exists.
+- [ ] Node slashing path exists.
+- [ ] Backend ledger can sync on-chain events.
+
+CI/CD:
+
+- [ ] Lint and type checks run.
+- [ ] Unit tests run.
+- [ ] Docker images build.
+- [ ] Images are checked for non-root execution.
+- [ ] Security scans run.
+- [ ] Compose or Kubernetes config validates.
+
+Kubernetes:
+
+- [ ] Namespace is defined.
+- [ ] Secrets are templated without real values.
+- [ ] API gateway deployment uses non-root and read-only root filesystem.
+- [ ] P2P deployment exposes the required P2P port.
+- [ ] Sentinel is singleton with writable workspace volume.
+- [ ] Services and ingress are defined.
+- [ ] Network policies default-deny and explicitly allow required paths.
+
+Integration tests:
+
+- [ ] P2P queue and trace propagation are tested.
+- [ ] Routing scoring, diversity, dispatch, and key rotation are tested.
+- [ ] ZKML stub, sidecar, and expiry paths are tested.
+- [ ] AGORA validation and warm-start paths are tested.
+- [ ] JWT, HMAC, Sentinel path safety, CORS, headers, and rate limiting are tested.
+
+### 19.5 Execution Rule
+
+Do not implement all completion pillars at once. Pick one pillar, patch the smallest responsible set of files, verify locally, then commit. This keeps the codebase stable and makes each improvement reviewable.
