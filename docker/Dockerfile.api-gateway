@@ -7,7 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # 1. Create the unprivileged user
-RUN useradd --create-home --uid 10001 aura
+RUN addgroup --system aura \
+    && adduser --system --ingroup aura --uid 10001 --home /home/aura aura
 
 # 2. Install OS-level dependencies for fastecdsa and libp2p
 RUN apt-get update \
@@ -25,16 +26,17 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY backend /app/backend
 COPY docker/assert_runtime_permissions.py /usr/local/bin/assert_runtime_permissions.py
 
-# 5. The Zero-Trust Lock: Root owns it, no one can write to it
-RUN chown -R root:root /app/backend \
+# 5. Grant ownership to aura, then remove write bits from source
+RUN chown -R aura:aura /app/backend \
     && chmod -R a-w /app/backend \
     && chmod +x /usr/local/bin/assert_runtime_permissions.py
 
-# 6. Drop privileges
-USER aura
 WORKDIR /app/backend
 
 EXPOSE 8000
+
+# 6. Drop privileges immediately before process start
+USER aura
 
 # 7. Run the security guard, then boot the API
 CMD ["sh", "-c", "python /usr/local/bin/assert_runtime_permissions.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
