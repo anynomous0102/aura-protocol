@@ -1,0 +1,15 @@
+FROM python:3.13-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+RUN useradd --create-home --uid 10002 aura-p2p
+COPY backend/requirements.docker.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY backend /app/backend
+RUN chown -R root:root /app/backend && chmod -R a-w /app/backend
+
+USER aura-p2p
+WORKDIR /app/backend
+CMD ["python", "-m", "app.workers.p2p_node"]

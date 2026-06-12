@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import time
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.middleware.hmac_verifier import HMACVerificationMiddleware
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _token(sub: str) -> str:
+    header = _b64url(json.dumps({"alg": "none"}).encode())
+    payload = _b64url(json.dumps({"sub": sub}).encode())
+    return f"{header}.{payload}.sig"
+
+
+def _signature(method: str, path: str, timestamp: str, body: bytes, secret: str) -> str:
+    body_hash = hashlib.sha256(body).hexdigest()
+    return hmac.new(secret.encode(), f"{method}:{path}:{timestamp}:{body_hash}".encode(), hashlib.sha256).hexdigest()
+
+
+def _client() -> TestClient:
+    app = FastAPI()
+    app.add_middleware(HMACVerificationMiddleware)
+
+    @app.post("/protected")
+    async def protected(payload: dict[str, str]):
+        return {"ok": True, "payload": payload}
+
+    @app.post("/health")
+    async def health():
+        return {"ok": True}
+
+    return TestClient(app)
+
+
+def test_encryption_round_trip_python_equivalent():
+    key = hashlib.pbkdf2_hmac("sha256", b"user-secret", b"aura-v1", 100_000, dklen=32)
+    aesgcm = AESGCM(key)
+    iv = b"123456789012"
+    value = {"hello": "world"}
+    ciphertext = aesgcm.encrypt(iv, json.dumps(value).encode(), None)
+    stored = iv + ciphertext
+    try:
+        json.loads(stored.decode())
+        assert False
+    except UnicodeDecodeError:
+        pass
+    assert json.loads(aesgcm.decrypt(stored[:12], stored[12:], None).decode()) == value
+
+
+def test_valid_hmac_accepted():
+    client = _client()
+    body = b'{"x":"1"}'
+    secret = "user-1"
+    timestamp = str(int(time.time() * 1000))
+    response = client.post(
+        "/protected",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {_token(secret)}",
+            "X-AURA-Timestamp": timestamp,
+            "X-AURA-Signature": _signature("POST", "/protected", timestamp, body, secret),
+        },
+    )
+    assert response.status_code == 200
+
+
+def test_modified_body_rejected():
+    client = _client()
+    secret = "user-1"
+    timestamp = str(int(time.time() * 1000))
+    response = client.post(
+        "/protected",
+        content=b'{"x":"2"}',
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {_token(secret)}",
+            "X-AURA-Timestamp": timestamp,
+            "X-AURA-Signature": _signature("POST", "/protected", timestamp, b'{"x":"1"}', secret),
+        },
+    )
+    assert response.status_code == 403
+
+
+def test_replay_timestamp_rejected():
+    client = _client()
+    secret = "user-1"
+    body = b'{"x":"1"}'
+    timestamp = str(int((time.time() - 400) * 1000))
+    response = client.post(
+        "/protected",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {_token(secret)}",
+            "X-AURA-Timestamp": timestamp,
+            "X-AURA-Signature": _signature("POST", "/protected", timestamp, body, secret),
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Request timestamp expired"
+
+
+def test_missing_signature_rejected():
+    response = _client().post("/protected", json={"x": "1"}, headers={"Authorization": f"Bearer {_token('user-1')}"})
+    assert response.status_code == 403
+
+
+def test_exempt_path_bypasses_middleware():
+    assert _client().post("/health").status_code == 200

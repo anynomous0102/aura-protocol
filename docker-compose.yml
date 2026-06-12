@@ -1,30 +1,156 @@
 services:
-  backend:
+  aura-api-gateway:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: aura-backend
+      dockerfile: docker/Dockerfile.api-gateway
+    container_name: aura-api-gateway
     env_file:
       - ./backend/.env
     environment:
+      AURA_ALLOWED_ORIGINS: ${AURA_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       AURA_DATA_DIR: /app/backend/data
-      PORT: 8000
-      AURA_ENABLE_ANP_WORKER: "false"
+      AURA_REGION: ${AURA_REGION:-local}
+      AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
+      AURA_SENTINEL_DIAGNOSTICS_ENABLED: "true"
+      AURA_SENTINEL_MUTATION_ENABLED: "false"
+      AURA_SENTINEL_ADMIN_HMAC_SECRET: ${AURA_SENTINEL_ADMIN_HMAC_SECRET:-dev-only-change-me}
+      AURA_SENTINEL_PATCH_KEY: ${AURA_SENTINEL_PATCH_KEY:-}
+      DATABASE_ENGINE: cockroach
+      COCKROACH_DATABASE_URL: ${COCKROACH_DATABASE_URL:-postgresql+asyncpg://root@aura-cockroach:26257/defaultdb?ssl=disable}
+      GLOBAL_REDIS_URLS: ${GLOBAL_REDIS_URLS:-local|redis://aura-redis:6379/0}
+      REDIS_CONNECT_ATTEMPTS: ${REDIS_CONNECT_ATTEMPTS:-12}
+      REDIS_OPERATION_RETRIES: ${REDIS_OPERATION_RETRIES:-4}
+      REDIS_RECONNECT_BACKOFF_SECONDS: ${REDIS_RECONNECT_BACKOFF_SECONDS:-0.25}
+      REDIS_URL: redis://aura-redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-true}
     ports:
       - "8000:8000"
-    volumes:
-      - ./backend/data:/app/backend/data
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=128m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      - aura-cockroach
+      - aura-redis
+    networks:
+      - aura-edge
+      - aura-broker
+      - aura-data
     restart: unless-stopped
 
-  frontend:
+  aura-p2p-node:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        VITE_BACKEND_URL: http://localhost:8000
-    container_name: aura-frontend
-    ports:
-      - "3000:80"
+      context: .
+      dockerfile: docker/Dockerfile.p2p-node
+    container_name: aura-p2p-node
+    environment:
+      AURA_REGION: ${AURA_REGION:-local}
+      AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
+      REDIS_URL: redis://aura-redis:6379/0
+      GLOBAL_REDIS_URLS: ${GLOBAL_REDIS_URLS:-local|redis://aura-redis:6379/0}
+      REDIS_CONNECT_ATTEMPTS: ${REDIS_CONNECT_ATTEMPTS:-12}
+      REDIS_OPERATION_RETRIES: ${REDIS_OPERATION_RETRIES:-4}
+      AURA_P2P_PORT: "9000"
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-true}
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=128m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
-      - backend
+      - aura-redis
+    networks:
+      - aura-broker
+      - aura-p2p
     restart: unless-stopped
+
+  aura-sentinel-core:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.sentinel-core
+    container_name: aura-sentinel-core
+    env_file:
+      - ./backend/.env
+    environment:
+      AURA_REPO_ROOT: /workspace
+      AURA_REGION: ${AURA_REGION:-local}
+      AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
+      AURA_SENTINEL_ALLOWED_ROOTS: backend/app
+      AURA_SENTINEL_MUTATION_ENABLED: "true"
+      AURA_SENTINEL_ADMIN_HMAC_SECRET: ${AURA_SENTINEL_ADMIN_HMAC_SECRET:-dev-only-change-me}
+      AURA_SENTINEL_PATCH_KEY: ${AURA_SENTINEL_PATCH_KEY:-}
+      DATABASE_ENGINE: cockroach
+      COCKROACH_DATABASE_URL: ${COCKROACH_DATABASE_URL:-postgresql+asyncpg://root@aura-cockroach:26257/defaultdb?ssl=disable}
+      GLOBAL_REDIS_URLS: ${GLOBAL_REDIS_URLS:-local|redis://aura-redis:6379/0}
+      REDIS_CONNECT_ATTEMPTS: ${REDIS_CONNECT_ATTEMPTS:-12}
+      REDIS_OPERATION_RETRIES: ${REDIS_OPERATION_RETRIES:-4}
+      REDIS_URL: redis://aura-redis:6379/0
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-true}
+    volumes:
+      - ./backend/app:/workspace/backend/app:rw
+      - ./backend/app/migrations:/workspace/backend/app/migrations:rw
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      - aura-cockroach
+      - aura-redis
+    networks:
+      - aura-broker
+      - aura-data
+    restart: unless-stopped
+
+  aura-redis:
+    image: redis:7.4-alpine
+    container_name: aura-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    volumes:
+      - aura-redis-data:/data
+    networks:
+      - aura-broker
+    restart: unless-stopped
+
+  aura-cockroach:
+    image: cockroachdb/cockroach:v25.4.0
+    container_name: aura-cockroach
+    command: ["start-single-node", "--insecure", "--store=/cockroach/cockroach-data", "--listen-addr=0.0.0.0:26257", "--http-addr=0.0.0.0:8080"]
+    healthcheck:
+      test: ["CMD", "cockroach", "sql", "--insecure", "--host=localhost:26257", "-e", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - aura-cockroach-data:/cockroach/cockroach-data
+    networks:
+      - aura-data
+    restart: unless-stopped
+
+networks:
+  aura-edge:
+    driver: bridge
+  aura-broker:
+    driver: bridge
+    internal: true
+  aura-data:
+    driver: bridge
+    internal: true
+  aura-p2p:
+    driver: bridge
+
+volumes:
+  aura-redis-data:
+  aura-cockroach-data:

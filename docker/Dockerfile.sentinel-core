@@ -1,0 +1,17 @@
+FROM python:3.13-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    AURA_SENTINEL_MUTATION_ENABLED=true \
+    AURA_SENTINEL_ALLOWED_ROOTS=backend/app
+
+WORKDIR /workspace
+RUN useradd --create-home --uid 10003 aura-sentinel
+COPY backend/requirements.docker.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY backend /workspace/backend
+RUN chown -R aura-sentinel:aura-sentinel /workspace/backend/app
+
+USER aura-sentinel
+WORKDIR /workspace/backend
+CMD ["python", "-m", "app.workers.sentinel_core"]
