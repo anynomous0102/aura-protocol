@@ -34,6 +34,9 @@ RUN apt-get update \
         python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
+RUN addgroup --system aura \
+    && adduser --system --ingroup aura --home /home/aura aura
+
 COPY backend/requirements.docker.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
@@ -43,9 +46,15 @@ COPY docker/nginx.conf.template /etc/nginx/templates/aura.conf.template
 COPY docker/start.sh /app/start.sh
 
 RUN chmod +x /app/start.sh \
-    && mkdir -p /app/backend/data/docs /app/backend/data/chroma_db /run/nginx \
-    && rm -f /etc/nginx/conf.d/default.conf /etc/nginx/sites-enabled/default
+    && mkdir -p /app/backend/data/docs /app/backend/data/chroma_db /run/nginx /var/cache/nginx /var/lib/nginx /var/log/nginx /etc/nginx/conf.d \
+    && rm -f /etc/nginx/conf.d/default.conf /etc/nginx/sites-enabled/default \
+    && chown -R root:root /app/backend/app \
+    && chmod -R a-w /app/backend/app \
+    && chown -R aura:aura /app/backend/data /run/nginx /var/cache/nginx /var/lib/nginx /var/log/nginx /etc/nginx/conf.d \
+    && chmod -R u+rwX /app/backend/data /run/nginx /var/cache/nginx /var/lib/nginx /var/log/nginx /etc/nginx/conf.d
 
 EXPOSE 10000
+
+USER aura
 
 CMD ["/app/start.sh"]

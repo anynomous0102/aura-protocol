@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 WORKDIR /app
-RUN useradd --create-home --uid 10002 aura-p2p
+RUN useradd --create-home --uid 10002 aura
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -16,6 +16,6 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY backend /app/backend
 RUN chown -R root:root /app/backend && chmod -R a-w /app/backend
 
-USER aura-p2p
+USER aura
 WORKDIR /app/backend
 CMD ["python", "-m", "app.workers.p2p_node"]

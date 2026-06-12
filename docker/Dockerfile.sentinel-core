@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     AURA_SENTINEL_ALLOWED_ROOTS=backend/app
 
 WORKDIR /workspace
-RUN useradd --create-home --uid 10003 aura-sentinel
+RUN useradd --create-home --uid 10003 aura
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -16,8 +16,8 @@ RUN apt-get update \
 COPY backend/requirements.docker.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY backend /workspace/backend
-RUN chown -R aura-sentinel:aura-sentinel /workspace/backend/app
+RUN chown -R aura:aura /workspace/backend/app
 
-USER aura-sentinel
+USER aura
 WORKDIR /workspace/backend
 CMD ["python", "-m", "app.workers.sentinel_core"]
