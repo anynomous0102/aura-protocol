@@ -666,3 +666,215 @@ AURA is now structured as a distributed AI orchestration system:
 - Sentinel code mutation is staged and requires signed human approval.
 
 The outcome is a safer, more observable, multi-region-ready foundation for an AI routing and protocol platform.
+
+## 18. Master Engineering Standards
+
+This section records the engineering rules that should guide future AURA upgrades. It is intentionally written as a human-readable contract, not as generated code. The goal is to improve the codebase without breaking its current structure or forcing large rewrites.
+
+### 18.1 Upgrade Strategy
+
+Future upgrades should be done one module at a time.
+
+Do not ask an AI or developer to rewrite the entire system in one session. The safer pattern is:
+
+1. Pick one module.
+2. State the relevant invariants.
+3. Patch only that module and its direct tests.
+4. Verify locally.
+5. Commit the small change.
+
+This keeps risk low and makes production debugging much easier.
+
+### 18.2 Immutable Architecture Rules
+
+The intended container boundaries are:
+
+- `aura-api-gateway`
+  - Handles public API traffic.
+  - Should run as a non-root user.
+  - Should keep Python source read-only.
+  - Should not perform direct P2P operations.
+
+- `aura-p2p-node`
+  - Handles P2P networking.
+  - Consumes brokered messages.
+  - Should not mutate application source.
+
+- `aura-sentinel-core`
+  - Owns controlled workspace mutation.
+  - Must validate patch paths.
+  - Must stage patches before approval.
+  - Must require verified administrator approval before applying changes.
+
+The long-term target is to re-enable strict zero-trust startup checks after cloud runtime behavior is fully understood.
+
+### 18.3 Security Rules
+
+The following rules should be treated as hard requirements for future production work:
+
+- No hardcoded secrets.
+- No committed `.env` files.
+- No wildcard CORS in production.
+- No `eval()`, `exec()`, or unsafe deserialization of untrusted input.
+- No shell execution using unsanitized user input.
+- No SQL string interpolation for user-controlled values.
+- No external HTTP call without an explicit timeout.
+- No direct code mutation without path validation and approval.
+- No default admin secret outside development.
+- Use `hmac.compare_digest()` for signature comparison.
+- Keep security headers enabled on all API responses.
+
+### 18.4 Database Rules
+
+Database changes should follow these rules:
+
+- Prefer async SQLAlchemy 2.x patterns.
+- Use bound parameters for all SQL.
+- Keep CockroachDB transaction retry behavior for serialization conflicts.
+- Use region-prefixed UUIDv7-style IDs for globally generated records.
+- Avoid migrations that depend on single-node PostgreSQL assumptions.
+- Keep SQLite fallback useful for local development, but do not let local shims shadow real installed packages.
+
+### 18.5 Redis Rules
+
+Redis should remain the coordination layer for:
+
+- broker queues
+- distributed rate limits
+- provider gates
+- metrics
+- trace propagation metadata
+
+For local development and MVP deployment, Redis may be optional. For production deployments that require strict coordination, set:
+
+```text
+AURA_REQUIRE_REDIS=true
+```
+
+When Redis is required, startup should fail if no endpoint is reachable.
+
+### 18.6 Tracing Rules
+
+Any request that crosses a Redis queue boundary should carry trace metadata.
+
+The expected flow is:
+
+1. API route starts a span.
+2. Queue payload receives trace metadata.
+3. Worker extracts trace metadata.
+4. Worker starts a child span.
+5. Worker records message type, queue name, and outcome.
+
+This keeps API and worker behavior observable as one distributed flow.
+
+### 18.7 Sentinel Mutation Rules
+
+Sentinel mutation must remain human-in-the-loop.
+
+Patch approval should include:
+
+- diagnostic ID
+- admin ID
+- admin role
+- staged patch digest
+- expiry timestamp
+- HMAC or stronger asymmetric signature
+
+Before applying a patch, Sentinel must:
+
+1. Re-validate the target path.
+2. Confirm the file is still the same version that was staged.
+3. Verify approval signature.
+4. Apply changes atomically.
+5. Write an immutable audit record.
+
+### 18.8 Module Upgrade Roadmap
+
+The best future upgrade order is:
+
+1. `backend/app/main.py`
+   - Replace deprecated startup events with a lifespan context.
+   - Re-enable zero-trust permission checks once Render runtime execution is fixed.
+   - Add DB and Redis readiness details to `/health`.
+
+2. `backend/app/enterprise/redis_runtime.py`
+   - Add sliding-window Lua rate limiting.
+   - Add stronger provider gate release semantics.
+   - Add structured metric recording.
+
+3. `backend/app/services/router.py`
+   - Add fault-diverse top-K routing.
+   - Add latency/reputation/load scoring.
+   - Add hedged provider calls and consensus selection.
+
+4. `backend/app/api/routes/auth.py`
+   - Add nonce-based wallet authentication.
+   - Enforce stronger JWT validation.
+   - Add replay-resistant login flow.
+
+5. `backend/app/enterprise/code_healer.py`
+   - Replace shared-secret HMAC with asymmetric or KMS-backed approval.
+   - Verify old file hash before applying staged patches.
+   - Add richer immutable audit records.
+
+6. `backend/app/workers/p2p_node.py`
+   - Add graceful shutdown.
+   - Add structured JSON logs.
+   - Improve Redis reconnect backoff.
+
+7. `backend/app/services/zk_verifier.py`
+   - Add a production verifier sidecar interface.
+   - Persist proof receipts with explicit verification states.
+
+8. `frontend/src/utils/cryptoStorage.ts` and `frontend/src/utils/secureFetch.ts`
+   - Prefer session-scoped encrypted storage for sensitive tokens.
+   - Add request timeouts and consistent session-expired behavior.
+
+### 18.9 Dependency Direction
+
+The long-term production target is Python 3.11 because native cryptographic and P2P dependencies are more predictable there than on newer Python versions.
+
+Production Docker images should use:
+
+```text
+python:3.11-slim
+```
+
+Native build dependencies should be installed before Python requirements:
+
+```text
+build-essential
+gcc
+libgmp-dev
+python3-dev
+```
+
+The codebase should eventually converge on one pinned dependency set for local, Docker, and CI environments.
+
+### 18.10 CI Direction
+
+The best next CI pipeline should run:
+
+- Python syntax/import checks
+- unit tests with `pytest`
+- frontend build
+- Docker build
+- Docker Compose config validation
+- secret scanning
+
+CI should fail if:
+
+- `.env` files are staged
+- Python source is unexpectedly writable in API images
+- Docker images run as root
+- security headers are missing
+- CORS is wildcard in production mode
+
+### 18.11 Current Temporary Exceptions
+
+Two temporary MVP exceptions currently exist and should be tracked:
+
+- The FastAPI startup permission assertion is temporarily commented out for Render runtime debugging.
+- Redis is optional by default so local and MVP deployments can boot without a managed Redis endpoint.
+
+These exceptions are operationally useful, but they should not become permanent production defaults.
