@@ -29,6 +29,7 @@ RUN apt-get update \
         ca-certificates \
         curl \
         gettext-base \
+        libgmp-dev \
         nginx \
         python3-dev \
     && rm -rf /var/lib/apt/lists/*

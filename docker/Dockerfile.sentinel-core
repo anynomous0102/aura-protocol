@@ -7,6 +7,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /workspace
 RUN useradd --create-home --uid 10003 aura-sentinel
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        libgmp-dev \
+    && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.docker.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY backend /workspace/backend
