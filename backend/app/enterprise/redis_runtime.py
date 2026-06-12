@@ -40,6 +40,9 @@ class RedisRuntime:
         self._local_locks: Dict[str, asyncio.Semaphore] = {}
         self._connect_lock = asyncio.Lock()
 
+    def _required(self) -> bool:
+        return os.getenv("AURA_REQUIRE_REDIS", "").lower() in {"1", "true", "yes"}
+
     def _load_endpoints(self) -> list[RedisEndpoint]:
         raw_global = os.getenv("GLOBAL_REDIS_URLS", "").strip()
         if raw_global:
@@ -105,7 +108,11 @@ class RedisRuntime:
                     self._failure_count += 1
                     self._mark_endpoint_unhealthy(endpoint)
                     await asyncio.sleep(self._backoff(attempt))
-            raise RuntimeError(f"Unable to connect to any Redis endpoint: {last_error}") from last_error
+            if self._required():
+                raise RuntimeError(f"Unable to connect to any Redis endpoint: {last_error}") from last_error
+            self.client = None
+            self.active_endpoint = None
+            return
 
     def _region_first(self, endpoints: Iterable[RedisEndpoint]) -> list[RedisEndpoint]:
         values = list(endpoints)
