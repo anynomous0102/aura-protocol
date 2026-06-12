@@ -3,11 +3,17 @@ from __future__ import annotations
 import os
 import secrets
 import time
+import uuid
+from asyncio import sleep as asyncio_sleep
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Dict, Iterable, List, Mapping, Optional
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, TypeVar
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
+from sqlalchemy.exc import DBAPIError, OperationalError
+
+
+T = TypeVar("T")
 
 
 def _database_url() -> str:
@@ -27,27 +33,34 @@ DATABASE_URL = _database_url()
 IS_POSTGRES = DATABASE_URL.startswith("postgresql+asyncpg://")
 IS_COCKROACH = os.getenv("DATABASE_ENGINE", "").lower() == "cockroach" or bool(os.getenv("COCKROACH_DATABASE_URL", "").strip())
 REGION = os.getenv("AURA_REGION", "global").lower().replace("_", "-")[:16]
+REGION_ID_PREFIX = os.getenv("AURA_REGION_ID_PREFIX", REGION).lower().replace("_", "-")[:16]
 
 
 def regional_uuidv7(prefix: str | None = None) -> str:
-    region = (prefix or REGION or "global").lower().replace("_", "-")[:16]
+    region = (prefix or REGION_ID_PREFIX or "global").lower().replace("_", "-")[:16]
     timestamp_ms = int(time.time() * 1000)
-    random_bits = secrets.randbits(74)
-    value = (timestamp_ms << 80) | (0x7 << 76) | random_bits
-    encoded = f"{value:032x}"
-    uuid_text = f"{encoded[:8]}-{encoded[8:12]}-{encoded[12:16]}-{encoded[16:20]}-{encoded[20:]}"
+    value = (timestamp_ms & ((1 << 48) - 1)) << 80
+    value |= 0x7 << 76
+    value |= secrets.randbits(12) << 64
+    value |= 0b10 << 62
+    value |= secrets.randbits(62)
+    uuid_text = str(uuid.UUID(int=value))
     return f"{region}_{uuid_text}"
 
 
 def _connect_args() -> dict[str, Any]:
     if not IS_POSTGRES:
         return {}
-    return {
+    settings = {
         "server_settings": {
             "application_name": f"aura-{REGION}",
             "timezone": "UTC",
         }
     }
+    options = os.getenv("DB_SESSION_OPTIONS", "").strip()
+    if options:
+        settings["server_settings"]["options"] = options
+    return settings
 
 
 def _engine_kwargs() -> dict[str, Any]:
@@ -68,6 +81,38 @@ def _engine_kwargs() -> dict[str, Any]:
 
 
 engine: AsyncEngine = create_async_engine(DATABASE_URL, **_engine_kwargs())
+
+
+def _is_retryable_transaction_error(exc: BaseException) -> bool:
+    if not IS_COCKROACH:
+        return False
+    if isinstance(exc, (OperationalError, DBAPIError)):
+        code = getattr(getattr(exc, "orig", None), "sqlstate", "") or getattr(getattr(exc, "orig", None), "pgcode", "")
+        text_value = str(exc).lower()
+        return code == "40001" or "restart transaction" in text_value or "serialization failure" in text_value
+    return False
+
+
+async def run_transaction(work: Callable[[AsyncConnection], Awaitable[T]]) -> T:
+    async def _run(_: int) -> T:
+        async with engine.begin() as conn:
+            return await work(conn)
+
+    return await retry_database_operation(_run)
+
+
+async def retry_database_operation(work: Callable[[int], Awaitable[T]]) -> T:
+    max_retries = int(os.getenv("DB_TRANSACTION_RETRIES", "5" if IS_COCKROACH else "1"))
+    last_error: BaseException | None = None
+    for attempt in range(max_retries):
+        try:
+            return await work(attempt)
+        except BaseException as exc:
+            if not _is_retryable_transaction_error(exc) or attempt == max_retries - 1:
+                raise
+            last_error = exc
+            await asyncio_sleep(min(0.05 * (2 ** attempt), 1.0) + secrets.randbelow(25) / 1000)
+    raise RuntimeError("Database transaction retries exhausted.") from last_error
 
 
 @asynccontextmanager

@@ -29,7 +29,7 @@ async def run() -> None:
                 span.set_attribute("aura.sentinel.relative_path", request.relative_path)
                 if request.diagnostic_id is not None:
                     span.set_attribute("aura.sentinel.diagnostic_id", request.diagnostic_id)
-            await healer.commit_patch(request)
+            await healer.stage_patch(request)
 
 
 def main() -> None:

@@ -6,6 +6,10 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.enterprise.tracing import configure_tracing
+
+configure_tracing("aura-api-gateway")
+
 from app.api.routes import auth, chat, p2p, sentinel
 from app.enterprise.code_healer import SentinelCodeHealerMiddleware, init_sentinel_schema
 from app.enterprise.database import close_engine, init_enterprise_schema
@@ -13,7 +17,6 @@ from app.enterprise.normalized_database import init_normalized_schema
 from app.enterprise.permission_guard import assert_python_tree_read_only
 from app.enterprise.redis_runtime import redis_runtime
 from app.enterprise.security_headers import SecurityHeadersMiddleware
-from app.enterprise.tracing import configure_tracing
 from app.middleware.hmac_verifier import HMACVerificationMiddleware
 
 

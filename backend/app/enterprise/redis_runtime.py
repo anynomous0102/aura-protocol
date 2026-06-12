@@ -9,6 +9,7 @@ import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, Iterable, Optional
+from urllib.parse import urlparse
 
 from fastapi import HTTPException
 
@@ -35,6 +36,7 @@ class RedisRuntime:
         self.client: Optional["redis.Redis"] = None
         self.active_endpoint: RedisEndpoint | None = None
         self._failure_count = 0
+        self._endpoint_cooldowns: Dict[str, float] = {}
         self._local_locks: Dict[str, asyncio.Semaphore] = {}
         self._connect_lock = asyncio.Lock()
 
@@ -42,18 +44,36 @@ class RedisRuntime:
         raw_global = os.getenv("GLOBAL_REDIS_URLS", "").strip()
         if raw_global:
             endpoints: list[RedisEndpoint] = []
-            for item in raw_global.split(","):
-                value = item.strip()
+            try:
+                parsed = json.loads(raw_global)
+                values = parsed if isinstance(parsed, list) else []
+            except json.JSONDecodeError:
+                values = raw_global.split(",")
+            for item in values:
+                if isinstance(item, dict):
+                    region = str(item.get("region") or "global")
+                    url = str(item.get("url") or "").strip()
+                    if url:
+                        endpoints.append(RedisEndpoint(url=url, region=region.strip() or "global"))
+                    continue
+                value = str(item).strip()
                 if not value:
                     continue
                 if "|" in value:
                     region, url = value.split("|", 1)
                 else:
-                    region, url = "global", value
+                    region, url = self._region_from_url(value), value
                 endpoints.append(RedisEndpoint(url=url.strip(), region=region.strip() or "global"))
             if endpoints:
                 return endpoints
         return [RedisEndpoint(url=os.getenv("REDIS_URL", "redis://localhost:6379/0"), region=self.region)]
+
+    def _region_from_url(self, value: str) -> str:
+        host = urlparse(value).hostname or ""
+        for token in host.replace("_", "-").split("."):
+            if token in {self.region, "global"}:
+                return token
+        return "global"
 
     async def connect(self) -> None:
         if redis is None:
@@ -64,7 +84,7 @@ class RedisRuntime:
             last_error: BaseException | None = None
             attempts = int(os.getenv("REDIS_CONNECT_ATTEMPTS", "6"))
             for attempt in range(attempts):
-                ordered = self._region_first(self.endpoints)
+                ordered = self._healthy_region_first(self.endpoints)
                 endpoint = ordered[attempt % len(ordered)]
                 try:
                     candidate = redis.from_url(
@@ -82,12 +102,25 @@ class RedisRuntime:
                     return
                 except BaseException as exc:
                     last_error = exc
+                    self._failure_count += 1
+                    self._mark_endpoint_unhealthy(endpoint)
                     await asyncio.sleep(self._backoff(attempt))
             raise RuntimeError(f"Unable to connect to any Redis endpoint: {last_error}") from last_error
 
     def _region_first(self, endpoints: Iterable[RedisEndpoint]) -> list[RedisEndpoint]:
         values = list(endpoints)
         return sorted(values, key=lambda endpoint: 0 if endpoint.region == self.region else 1)
+
+    def _healthy_region_first(self, endpoints: Iterable[RedisEndpoint]) -> list[RedisEndpoint]:
+        now = time.monotonic()
+        ordered = self._region_first(endpoints)
+        healthy = [endpoint for endpoint in ordered if self._endpoint_cooldowns.get(endpoint.url, 0) <= now]
+        return healthy or ordered
+
+    def _mark_endpoint_unhealthy(self, endpoint: RedisEndpoint) -> None:
+        failures = max(1, self._failure_count + 1)
+        cooldown = min(float(os.getenv("REDIS_ENDPOINT_COOLDOWN_MAX_SECONDS", "30")), self._backoff(failures))
+        self._endpoint_cooldowns[endpoint.url] = time.monotonic() + cooldown
 
     async def ensure_connected(self) -> None:
         if self.client is None:
@@ -96,6 +129,8 @@ class RedisRuntime:
         try:
             await self.client.ping()
         except RedisError:
+            if self.active_endpoint is not None:
+                self._mark_endpoint_unhealthy(self.active_endpoint)
             await self.close()
             await self.connect()
 
@@ -118,6 +153,8 @@ class RedisRuntime:
             except RedisError as exc:
                 last_error = exc
                 self._failure_count += 1
+                if self.active_endpoint is not None:
+                    self._mark_endpoint_unhealthy(self.active_endpoint)
                 await self.close()
                 await asyncio.sleep(self._backoff(attempt))
         raise RuntimeError(f"Redis operation failed after reconnect attempts: {operation}") from last_error
@@ -131,9 +168,17 @@ class RedisRuntime:
     async def rpush_json(self, queue: str, payload: dict[str, Any]) -> None:
         envelope = dict(payload)
         metadata = dict(envelope.get("metadata") or {})
+        if not metadata.get("trace_context"):
+            try:
+                from app.enterprise.tracing import inject_trace_metadata
+
+                metadata = inject_trace_metadata(metadata)
+            except Exception:
+                metadata.setdefault("trace_context", {})
         metadata.setdefault("origin_region", self.region)
         metadata.setdefault("redis_endpoint_region", self.active_endpoint.region if self.active_endpoint else self.region)
         metadata.setdefault("queued_at_ms", int(time.time() * 1000))
+        metadata.setdefault("global_sync_mode", os.getenv("REDIS_GLOBAL_SYNC_MODE", "crdt-active-active"))
         envelope["metadata"] = metadata
         await self._execute("rpush", queue, json.dumps(envelope, separators=(",", ":")))
         await self._execute("set", f"aura:sync:{queue}:{self.region}", metadata["queued_at_ms"], ex=int(os.getenv("REDIS_SYNC_WATERMARK_TTL_SECONDS", "900")))
@@ -182,7 +227,9 @@ class RedisRuntime:
         if self.client is None:
             return
         bucket = int(time.time() // window_seconds)
-        key = f"aura:ratelimit:{subject}:{bucket}"
+        scope = os.getenv("REDIS_RATE_LIMIT_SCOPE", "global").lower()
+        namespace = "global" if scope == "global" else self.region
+        key = f"aura:ratelimit:{namespace}:{subject}:{bucket}"
         count = await self._execute("incr", key)
         if count == 1:
             await self._execute("expire", key, window_seconds + int(os.getenv("REDIS_CRDT_GRACE_SECONDS", "10")))

@@ -10,16 +10,22 @@ services:
       AURA_ALLOWED_ORIGINS: ${AURA_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       AURA_DATA_DIR: /app/backend/data
       AURA_REGION: ${AURA_REGION:-local}
+      AURA_REGION_ID_PREFIX: ${AURA_REGION_ID_PREFIX:-local}
       AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
       AURA_SENTINEL_DIAGNOSTICS_ENABLED: "true"
       AURA_SENTINEL_MUTATION_ENABLED: "false"
       AURA_SENTINEL_ADMIN_HMAC_SECRET: ${AURA_SENTINEL_ADMIN_HMAC_SECRET:-dev-only-change-me}
+      AURA_SENTINEL_ADMIN_ROLE: ${AURA_SENTINEL_ADMIN_ROLE:-sentinel-admin}
       AURA_SENTINEL_PATCH_KEY: ${AURA_SENTINEL_PATCH_KEY:-}
       DATABASE_ENGINE: cockroach
-      COCKROACH_DATABASE_URL: ${COCKROACH_DATABASE_URL:-postgresql+asyncpg://root@aura-cockroach:26257/defaultdb?ssl=disable}
+      COCKROACH_DATABASE_URL: ${COCKROACH_DATABASE_URL:-postgresql+asyncpg://root@aura-cockroach-us-east:26257/defaultdb?ssl=disable}
+      DB_TRANSACTION_RETRIES: ${DB_TRANSACTION_RETRIES:-5}
       GLOBAL_REDIS_URLS: ${GLOBAL_REDIS_URLS:-local|redis://aura-redis:6379/0}
+      REDIS_GLOBAL_SYNC_MODE: ${REDIS_GLOBAL_SYNC_MODE:-crdt-active-active}
+      REDIS_RATE_LIMIT_SCOPE: ${REDIS_RATE_LIMIT_SCOPE:-global}
       REDIS_CONNECT_ATTEMPTS: ${REDIS_CONNECT_ATTEMPTS:-12}
       REDIS_OPERATION_RETRIES: ${REDIS_OPERATION_RETRIES:-4}
+      REDIS_ENDPOINT_COOLDOWN_MAX_SECONDS: ${REDIS_ENDPOINT_COOLDOWN_MAX_SECONDS:-30}
       REDIS_RECONNECT_BACKOFF_SECONDS: ${REDIS_RECONNECT_BACKOFF_SECONDS:-0.25}
       REDIS_URL: redis://aura-redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
@@ -34,7 +40,7 @@ services:
     cap_drop:
       - ALL
     depends_on:
-      - aura-cockroach
+      - aura-cockroach-init
       - aura-redis
     networks:
       - aura-edge
@@ -49,9 +55,11 @@ services:
     container_name: aura-p2p-node
     environment:
       AURA_REGION: ${AURA_REGION:-local}
+      AURA_REGION_ID_PREFIX: ${AURA_REGION_ID_PREFIX:-local}
       AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
       REDIS_URL: redis://aura-redis:6379/0
       GLOBAL_REDIS_URLS: ${GLOBAL_REDIS_URLS:-local|redis://aura-redis:6379/0}
+      REDIS_GLOBAL_SYNC_MODE: ${REDIS_GLOBAL_SYNC_MODE:-crdt-active-active}
       REDIS_CONNECT_ATTEMPTS: ${REDIS_CONNECT_ATTEMPTS:-12}
       REDIS_OPERATION_RETRIES: ${REDIS_OPERATION_RETRIES:-4}
       AURA_P2P_PORT: "9000"
@@ -81,16 +89,22 @@ services:
     environment:
       AURA_REPO_ROOT: /workspace
       AURA_REGION: ${AURA_REGION:-local}
+      AURA_REGION_ID_PREFIX: ${AURA_REGION_ID_PREFIX:-local}
       AURA_ENVIRONMENT: ${AURA_ENVIRONMENT:-development}
       AURA_SENTINEL_ALLOWED_ROOTS: backend/app
       AURA_SENTINEL_MUTATION_ENABLED: "true"
       AURA_SENTINEL_ADMIN_HMAC_SECRET: ${AURA_SENTINEL_ADMIN_HMAC_SECRET:-dev-only-change-me}
+      AURA_SENTINEL_ADMIN_ROLE: ${AURA_SENTINEL_ADMIN_ROLE:-sentinel-admin}
       AURA_SENTINEL_PATCH_KEY: ${AURA_SENTINEL_PATCH_KEY:-}
       DATABASE_ENGINE: cockroach
-      COCKROACH_DATABASE_URL: ${COCKROACH_DATABASE_URL:-postgresql+asyncpg://root@aura-cockroach:26257/defaultdb?ssl=disable}
+      COCKROACH_DATABASE_URL: ${COCKROACH_DATABASE_URL:-postgresql+asyncpg://root@aura-cockroach-us-east:26257/defaultdb?ssl=disable}
+      DB_TRANSACTION_RETRIES: ${DB_TRANSACTION_RETRIES:-5}
       GLOBAL_REDIS_URLS: ${GLOBAL_REDIS_URLS:-local|redis://aura-redis:6379/0}
+      REDIS_GLOBAL_SYNC_MODE: ${REDIS_GLOBAL_SYNC_MODE:-crdt-active-active}
+      REDIS_RATE_LIMIT_SCOPE: ${REDIS_RATE_LIMIT_SCOPE:-global}
       REDIS_CONNECT_ATTEMPTS: ${REDIS_CONNECT_ATTEMPTS:-12}
       REDIS_OPERATION_RETRIES: ${REDIS_OPERATION_RETRIES:-4}
+      REDIS_ENDPOINT_COOLDOWN_MAX_SECONDS: ${REDIS_ENDPOINT_COOLDOWN_MAX_SECONDS:-30}
       REDIS_URL: redis://aura-redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-true}
@@ -102,7 +116,7 @@ services:
     cap_drop:
       - ALL
     depends_on:
-      - aura-cockroach
+      - aura-cockroach-init
       - aura-redis
     networks:
       - aura-broker
@@ -124,20 +138,63 @@ services:
       - aura-broker
     restart: unless-stopped
 
-  aura-cockroach:
+  aura-cockroach-us-east:
     image: cockroachdb/cockroach:v25.4.0
-    container_name: aura-cockroach
-    command: ["start-single-node", "--insecure", "--store=/cockroach/cockroach-data", "--listen-addr=0.0.0.0:26257", "--http-addr=0.0.0.0:8080"]
+    container_name: aura-cockroach-us-east
+    command: ["start", "--insecure", "--store=/cockroach/cockroach-data", "--listen-addr=0.0.0.0:26257", "--advertise-addr=aura-cockroach-us-east:26257", "--http-addr=0.0.0.0:8080", "--join=aura-cockroach-us-east:26257,aura-cockroach-eu-west:26257,aura-cockroach-ap-south:26257", "--locality=region=us-east,zone=us-east-a"]
     healthcheck:
       test: ["CMD", "cockroach", "sql", "--insecure", "--host=localhost:26257", "-e", "SELECT 1"]
       interval: 10s
       timeout: 5s
       retries: 12
     volumes:
-      - aura-cockroach-data:/cockroach/cockroach-data
+      - aura-cockroach-us-east-data:/cockroach/cockroach-data
     networks:
       - aura-data
     restart: unless-stopped
+
+  aura-cockroach-eu-west:
+    image: cockroachdb/cockroach:v25.4.0
+    container_name: aura-cockroach-eu-west
+    command: ["start", "--insecure", "--store=/cockroach/cockroach-data", "--listen-addr=0.0.0.0:26257", "--advertise-addr=aura-cockroach-eu-west:26257", "--http-addr=0.0.0.0:8080", "--join=aura-cockroach-us-east:26257,aura-cockroach-eu-west:26257,aura-cockroach-ap-south:26257", "--locality=region=eu-west,zone=eu-west-a"]
+    healthcheck:
+      test: ["CMD", "cockroach", "sql", "--insecure", "--host=localhost:26257", "-e", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - aura-cockroach-eu-west-data:/cockroach/cockroach-data
+    networks:
+      - aura-data
+    restart: unless-stopped
+
+  aura-cockroach-ap-south:
+    image: cockroachdb/cockroach:v25.4.0
+    container_name: aura-cockroach-ap-south
+    command: ["start", "--insecure", "--store=/cockroach/cockroach-data", "--listen-addr=0.0.0.0:26257", "--advertise-addr=aura-cockroach-ap-south:26257", "--http-addr=0.0.0.0:8080", "--join=aura-cockroach-us-east:26257,aura-cockroach-eu-west:26257,aura-cockroach-ap-south:26257", "--locality=region=ap-south,zone=ap-south-a"]
+    healthcheck:
+      test: ["CMD", "cockroach", "sql", "--insecure", "--host=localhost:26257", "-e", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - aura-cockroach-ap-south-data:/cockroach/cockroach-data
+    networks:
+      - aura-data
+    restart: unless-stopped
+
+  aura-cockroach-init:
+    image: cockroachdb/cockroach:v25.4.0
+    container_name: aura-cockroach-init
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["cockroach init --insecure --host=aura-cockroach-us-east:26257 || true"]
+    depends_on:
+      - aura-cockroach-us-east
+      - aura-cockroach-eu-west
+      - aura-cockroach-ap-south
+    networks:
+      - aura-data
+    restart: "no"
 
 networks:
   aura-edge:
@@ -153,4 +210,6 @@ networks:
 
 volumes:
   aura-redis-data:
-  aura-cockroach-data:
+  aura-cockroach-us-east-data:
+  aura-cockroach-eu-west-data:
+  aura-cockroach-ap-south-data:

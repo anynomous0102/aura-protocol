@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.enterprise.database import engine
+from app.enterprise.database import engine, retry_database_operation
 from app.models.chat import Base, Message, Session, User
 
 
@@ -49,15 +49,18 @@ async def append_message(
 ) -> None:
     await init_normalized_schema()
     canonical_session_id = _canonical_session_id(user_id, session_id)
-    async with SessionLocal() as db:
-        async with db.begin():
-            await upsert_user(db, user_id=user_id)
-            chat_session = await db.get(Session, canonical_session_id)
-            if chat_session is None:
-                chat_session = Session(id=canonical_session_id, user_id=user_id, title=content[:120] or "Session")
-                db.add(chat_session)
-            chat_session.updated_at = datetime.now(timezone.utc)
-            db.add(Message(session_id=canonical_session_id, role=role, content=content, provider=provider, token_count=token_count))
+    async def _work(_: int) -> None:
+        async with SessionLocal() as db:
+            async with db.begin():
+                await upsert_user(db, user_id=user_id)
+                chat_session = await db.get(Session, canonical_session_id)
+                if chat_session is None:
+                    chat_session = Session(id=canonical_session_id, user_id=user_id, title=content[:120] or "Session")
+                    db.add(chat_session)
+                chat_session.updated_at = datetime.now(timezone.utc)
+                db.add(Message(session_id=canonical_session_id, role=role, content=content, provider=provider, token_count=token_count))
+
+    await retry_database_operation(_work)
 
 
 async def list_sessions(user_id: str) -> list[dict[str, Any]]:

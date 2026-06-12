@@ -46,6 +46,7 @@ class SentinelDiagnosis(BaseModel):
 class SentinelApprovalRequest(BaseModel):
     diagnostic_id: int
     admin_id: str = Field(..., min_length=3, max_length=128)
+    admin_role: str = Field(default="sentinel-admin", min_length=3, max_length=128)
     staged_patch_sha256: str = Field(..., min_length=64, max_length=64)
     expires_at: int = Field(..., gt=0)
     signature: str = Field(..., min_length=32, max_length=512)
@@ -93,6 +94,7 @@ async def init_sentinel_schema() -> None:
             staged_patch_ciphertext TEXT,
             staged_patch_nonce TEXT,
             staged_patch_sha256 TEXT,
+            staged_patch_created_at TEXT,
             status TEXT DEFAULT 'PENDING_REVIEW',
             created_at TEXT NOT NULL
         )
@@ -102,6 +104,7 @@ async def init_sentinel_schema() -> None:
         "ALTER TABLE code_diagnostics ADD COLUMN staged_patch_ciphertext TEXT",
         "ALTER TABLE code_diagnostics ADD COLUMN staged_patch_nonce TEXT",
         "ALTER TABLE code_diagnostics ADD COLUMN staged_patch_sha256 TEXT",
+        "ALTER TABLE code_diagnostics ADD COLUMN staged_patch_created_at TEXT",
         "ALTER TABLE code_diagnostics ADD COLUMN approved_by TEXT",
         "ALTER TABLE code_diagnostics ADD COLUMN approved_at TEXT",
     ):
@@ -197,6 +200,7 @@ class SentinelCodeHealer:
                 SET staged_patch_ciphertext=:ciphertext,
                     staged_patch_nonce=:nonce,
                     staged_patch_sha256=:digest,
+                    staged_patch_created_at=:staged_patch_created_at,
                     status='PENDING_APPROVAL'
                 WHERE id=:diagnostic_id
                 """,
@@ -204,6 +208,7 @@ class SentinelCodeHealer:
                     "ciphertext": ciphertext,
                     "nonce": nonce,
                     "digest": digest,
+                    "staged_patch_created_at": datetime.now(timezone.utc).isoformat(),
                     "diagnostic_id": diagnostic_id,
                 },
             )
@@ -218,7 +223,7 @@ class SentinelCodeHealer:
         await init_sentinel_schema()
         row = await fetch_one(
             """
-            SELECT id, staged_patch_ciphertext, staged_patch_nonce, staged_patch_sha256, status
+            SELECT id, staged_patch_ciphertext, staged_patch_nonce, staged_patch_sha256, staged_patch_created_at, status
             FROM code_diagnostics
             WHERE id=:diagnostic_id
             """,
@@ -240,6 +245,7 @@ class SentinelCodeHealer:
             staged_digest,
         )
         patch_request = SentinelPatchRequest.model_validate({**patch, "diagnostic_id": request.diagnostic_id})
+        self.policy.resolve_allowed_path(patch_request.relative_path)
         if not self.policy.mutation_enabled:
             await self._log_patch(patch_request, "rejected")
             return SentinelPatchResult(status="rejected", relative_path=patch_request.relative_path, reason="Sentinel mutation is disabled.")
@@ -335,9 +341,18 @@ class SentinelCodeHealer:
         if request.expires_at < int(datetime.now(timezone.utc).timestamp()):
             raise PermissionError("Approval signature expired.")
         secret = os.getenv("AURA_SENTINEL_ADMIN_HMAC_SECRET", "").encode("utf-8")
+        environment = os.getenv("AURA_ENVIRONMENT", "development").lower()
         if not secret:
             raise PermissionError("Sentinel admin approval secret is not configured.")
-        message = f"approve-patch:{request.diagnostic_id}:{request.staged_patch_sha256}:{request.admin_id}:{request.expires_at}".encode("utf-8")
+        if environment in {"production", "prod", "mainnet"} and secret == b"dev-only-change-me":
+            raise PermissionError("Default Sentinel admin approval secret is forbidden outside development.")
+        expected_role = os.getenv("AURA_SENTINEL_ADMIN_ROLE", "sentinel-admin")
+        if request.admin_role != expected_role:
+            raise PermissionError("Sentinel approval requires the administrator role.")
+        message = (
+            f"approve-patch:{request.diagnostic_id}:{request.staged_patch_sha256}:"
+            f"{request.admin_id}:{request.admin_role}:{request.expires_at}"
+        ).encode("utf-8")
         expected = hmac.new(secret, message, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, request.signature):
             raise PermissionError("Invalid Sentinel admin approval signature.")
@@ -367,7 +382,7 @@ class SentinelCodeHealer:
         return await fetch_all(
             """
             SELECT id, endpoint, error_message, traceback, ai_root_cause, ai_suggested_code,
-                   staged_patch_sha256, status, created_at, approved_by, approved_at
+                   staged_patch_sha256, staged_patch_created_at, status, created_at, approved_by, approved_at
             FROM code_diagnostics
             ORDER BY id DESC
             LIMIT 100
