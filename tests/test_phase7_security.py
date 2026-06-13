@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.main import create_app
 from app.enterprise.permission_guard import RuntimePermissionError, assert_python_tree_read_only
 from app.middleware.hmac_verifier import HMACVerificationMiddleware
 
@@ -136,3 +137,23 @@ def test_permission_guard_uses_effective_process_writability(tmp_path, monkeypat
         assert False
     except RuntimePermissionError as exc:
         assert str(source) in str(exc)
+
+
+def test_vercel_origin_is_allowed_by_default(monkeypatch):
+    monkeypatch.delenv("AURA_ALLOWED_ORIGINS", raising=False)
+    monkeypatch.delenv("AURA_ALLOWED_ORIGIN_REGEX", raising=False)
+    monkeypatch.setenv("AURA_SKIP_PERMISSION_GUARD", "true")
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.options(
+        "/api/chat",
+        headers={
+            "Origin": "https://aura-web.vercel.app",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,authorization,x-aura-signature,x-aura-timestamp",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://aura-web.vercel.app"

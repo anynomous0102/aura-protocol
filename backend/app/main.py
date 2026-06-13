@@ -21,8 +21,15 @@ from app.middleware.hmac_verifier import HMACVerificationMiddleware
 
 
 def _cors_origins() -> list[str]:
-    raw = os.getenv("AURA_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    raw = os.getenv(
+        "AURA_ALLOWED_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000,https://aura-fullstack.onrender.com",
+    )
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _cors_origin_regex() -> str | None:
+    return os.getenv("AURA_ALLOWED_ORIGIN_REGEX", r"https://.*\.vercel\.app").strip() or None
 
 
 def create_app() -> FastAPI:
@@ -32,6 +39,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
+        allow_origin_regex=_cors_origin_regex(),
         allow_credentials=True,
         allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Authorization", "Content-Type", "X-AURA-Signature", "X-AURA-Timestamp", "X-Sentinel-Token"],

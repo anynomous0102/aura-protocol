@@ -3,11 +3,22 @@ import { secureFetch } from "./utils/secureFetch";
 
 export const GOOGLE_CLIENT_ID = "17620318358-elb3hcn915ik4f536rfsoo5itup40fdt.apps.googleusercontent.com";
 
-export const BACKEND_URL = (
-  import.meta.env.VITE_BACKEND_URL === undefined
-    ? "http://localhost:8000"
-    : import.meta.env.VITE_BACKEND_URL
-).replace(/\/$/, "");
+const DEFAULT_RENDER_BACKEND_URL = "https://aura-fullstack.onrender.com";
+
+const resolveBackendUrl = (): string => {
+  const configured = String(import.meta.env.VITE_BACKEND_URL ?? "").trim();
+  if (configured) return configured.replace(/\/$/, "");
+
+  if (typeof window === "undefined") return "http://localhost:8000";
+
+  const { hostname, origin, protocol } = window.location;
+  if (hostname === "localhost" || hostname === "127.0.0.1") return "http://localhost:8000";
+  if (hostname.endsWith(".vercel.app")) return DEFAULT_RENDER_BACKEND_URL;
+  if (protocol === "https:" || protocol === "http:") return origin;
+  return DEFAULT_RENDER_BACKEND_URL;
+};
+
+export const BACKEND_URL = resolveBackendUrl();
 
 let googleSdkPromise: Promise<void> | null = null;
 let accessTokenCache = "";
