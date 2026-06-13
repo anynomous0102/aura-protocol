@@ -15,6 +15,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         gcc \
+        gosu \
         libgmp-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -25,11 +26,15 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 # 4. Copy application code
 COPY backend /app/backend
 COPY docker/assert_runtime_permissions.py /usr/local/bin/assert_runtime_permissions.py
+COPY docker/api-gateway-start.sh /usr/local/bin/api-gateway-start.sh
 
-# 5. Grant ownership to aura, then remove write bits from source
-RUN chown -R aura:aura /app/backend \
-    && chmod -R a-w /app/backend \
-    && chmod +x /usr/local/bin/assert_runtime_permissions.py
+# 5. Keep source immutable while leaving runtime data writable
+RUN mkdir -p /app/backend/data \
+    && chown -R root:root /app/backend/app \
+    && chmod -R a-w /app/backend/app \
+    && chown -R aura:aura /app/backend/data \
+    && chmod -R u+rwX /app/backend/data \
+    && chmod +x /usr/local/bin/assert_runtime_permissions.py /usr/local/bin/api-gateway-start.sh
 
 WORKDIR /app/backend
 
@@ -38,5 +43,5 @@ EXPOSE 8000
 # 6. Drop privileges immediately before process start
 USER aura
 
-# 7. Run the security guard, then boot the API
-CMD ["sh", "-c", "python /usr/local/bin/assert_runtime_permissions.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# 7. Drop root if an orchestrator starts the image as UID 0, then boot the API
+CMD ["/usr/local/bin/api-gateway-start.sh"]
