@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.enterprise.permission_guard import RuntimePermissionError, assert_python_tree_read_only
 from app.middleware.hmac_verifier import HMACVerificationMiddleware
 
 
@@ -119,3 +120,19 @@ def test_missing_signature_rejected():
 
 def test_exempt_path_bypasses_middleware():
     assert _client().post("/health").status_code == 200
+
+
+def test_permission_guard_uses_effective_process_writability(tmp_path, monkeypatch):
+    source = tmp_path / "owned_by_someone_else.py"
+    source.write_text("VALUE = 1\n")
+    monkeypatch.setattr("app.enterprise.permission_guard._is_windows", lambda: False)
+    monkeypatch.setattr("app.enterprise.permission_guard._can_current_process_write", lambda path: False)
+
+    assert_python_tree_read_only(tmp_path)
+
+    monkeypatch.setattr("app.enterprise.permission_guard._can_current_process_write", lambda path: True)
+    try:
+        assert_python_tree_read_only(tmp_path)
+        assert False
+    except RuntimePermissionError as exc:
+        assert str(source) in str(exc)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import stat
 from pathlib import Path
 
 
@@ -20,6 +19,10 @@ def assert_non_root_runtime() -> None:
         raise RuntimePermissionError("AURA API workers must not run as root.")
 
 
+def _can_current_process_write(path: Path) -> bool:
+    return os.access(path, os.W_OK)
+
+
 def assert_python_tree_read_only(root: str | os.PathLike[str]) -> None:
     """Fail startup if Python source files are writable by this process."""
 
@@ -36,8 +39,7 @@ def assert_python_tree_read_only(root: str | os.PathLike[str]) -> None:
 
     writable_files: list[str] = []
     for path in root_path.rglob("*.py"):
-        mode = path.stat().st_mode
-        if mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+        if _can_current_process_write(path):
             writable_files.append(str(path))
             if len(writable_files) >= 10:
                 break

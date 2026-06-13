@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import stat
 import sys
 from pathlib import Path
 
@@ -14,8 +13,7 @@ def main() -> int:
     root = Path(os.getenv("AURA_PERMISSION_ROOT", "/app/backend/app")).resolve()
     writable = []
     for path in root.rglob("*.py"):
-        mode = path.stat().st_mode
-        if mode & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH):
+        if os.access(path, os.W_OK):
             writable.append(str(path))
             if len(writable) >= 20:
                 break
