@@ -157,3 +157,23 @@ def test_vercel_origin_is_allowed_by_default(monkeypatch):
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "https://aura-web.vercel.app"
+
+
+def test_render_origin_is_allowed_by_default(monkeypatch):
+    monkeypatch.delenv("AURA_ALLOWED_ORIGINS", raising=False)
+    monkeypatch.delenv("AURA_ALLOWED_ORIGIN_REGEX", raising=False)
+    monkeypatch.setenv("AURA_SKIP_PERMISSION_GUARD", "true")
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.options(
+        "/api/chat",
+        headers={
+            "Origin": "https://aura-protocol.onrender.com",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type,authorization,x-aura-signature,x-aura-timestamp",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://aura-protocol.onrender.com"

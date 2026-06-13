@@ -3,7 +3,7 @@ import { secureFetch } from "./utils/secureFetch";
 
 export const GOOGLE_CLIENT_ID = "17620318358-elb3hcn915ik4f536rfsoo5itup40fdt.apps.googleusercontent.com";
 
-const DEFAULT_RENDER_BACKEND_URL = "https://aura-fullstack.onrender.com";
+const DEFAULT_RENDER_BACKEND_URL = "https://aura-protocol.onrender.com";
 
 const resolveBackendUrl = (): string => {
   const configured = String(import.meta.env.VITE_BACKEND_URL ?? "").trim();

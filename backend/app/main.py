@@ -23,7 +23,7 @@ from app.middleware.hmac_verifier import HMACVerificationMiddleware
 def _cors_origins() -> list[str]:
     raw = os.getenv(
         "AURA_ALLOWED_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000,https://aura-fullstack.onrender.com",
+        "http://localhost:3000,http://127.0.0.1:3000,https://aura-protocol.onrender.com",
     )
     return [item.strip() for item in raw.split(",") if item.strip()]
 
