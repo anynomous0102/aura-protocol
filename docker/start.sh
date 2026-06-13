@@ -22,7 +22,7 @@ envsubst '${PORT} ${BACKEND_PORT}' \
 uvicorn app.main:app --app-dir /app/backend --host 127.0.0.1 --port "$BACKEND_PORT" &
 BACKEND_PID="$!"
 
-nginx -g "pid /run/nginx/nginx.pid; daemon off;" &
+nginx -g "daemon off;" &
 NGINX_PID="$!"
 
 term_handler() {

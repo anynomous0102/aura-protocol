@@ -49,6 +49,7 @@ COPY docker/start.sh /app/start.sh
 RUN chmod +x /app/start.sh \
     && mkdir -p /app/backend/data/docs /app/backend/data/chroma_db /run/nginx /var/cache/nginx /var/lib/nginx /var/log/nginx /etc/nginx/conf.d \
     && rm -f /etc/nginx/conf.d/default.conf /etc/nginx/sites-enabled/default \
+    && sed -i '/^user /d; s#^pid .*#pid /run/nginx/nginx.pid;#' /etc/nginx/nginx.conf \
     && chown -R root:root /app/backend/app \
     && chmod -R a-w /app/backend/app \
     && chown -R aura:aura /app/backend/data /run/nginx /var/cache/nginx /var/lib/nginx /var/log/nginx /etc/nginx/conf.d \
