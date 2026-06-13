@@ -29,6 +29,12 @@ def _database_url() -> str:
     return f"sqlite+aiosqlite:///{os.path.join(data_dir, 'aura_network.db')}"
 
 
+def _sqlite_database_url() -> str:
+    data_dir = os.getenv("AURA_DATA_DIR", os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    os.makedirs(data_dir, exist_ok=True)
+    return f"sqlite+aiosqlite:///{os.path.join(data_dir, 'aura_network.db')}"
+
+
 DATABASE_URL = _database_url()
 IS_POSTGRES = DATABASE_URL.startswith("postgresql+asyncpg://")
 IS_COCKROACH = os.getenv("DATABASE_ENGINE", "").lower() == "cockroach" or bool(os.getenv("COCKROACH_DATABASE_URL", "").strip())
@@ -81,6 +87,17 @@ def _engine_kwargs() -> dict[str, Any]:
 
 
 engine: AsyncEngine = create_async_engine(DATABASE_URL, **_engine_kwargs())
+
+
+async def switch_to_sqlite_fallback() -> None:
+    global DATABASE_URL, IS_POSTGRES, IS_COCKROACH, engine
+
+    old_engine = engine
+    DATABASE_URL = _sqlite_database_url()
+    IS_POSTGRES = False
+    IS_COCKROACH = False
+    engine = create_async_engine(DATABASE_URL, **_engine_kwargs())
+    await old_engine.dispose()
 
 
 def _is_retryable_transaction_error(exc: BaseException) -> bool:

@@ -8,11 +8,16 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.enterprise.database import engine, retry_database_operation
+from app.enterprise import database
 from app.models.chat import Base, Message, Session, User
 
 
-SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+SessionLocal = async_sessionmaker(database.engine, expire_on_commit=False, class_=AsyncSession)
+
+
+def refresh_session_factory() -> None:
+    global SessionLocal
+    SessionLocal = async_sessionmaker(database.engine, expire_on_commit=False, class_=AsyncSession)
 
 
 def _canonical_session_id(user_id: str, session_id: str) -> str:
@@ -23,7 +28,7 @@ def _canonical_session_id(user_id: str, session_id: str) -> str:
 
 
 async def init_normalized_schema() -> None:
-    async with engine.begin() as conn:
+    async with database.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
@@ -60,7 +65,7 @@ async def append_message(
                 chat_session.updated_at = datetime.now(timezone.utc)
                 db.add(Message(session_id=canonical_session_id, role=role, content=content, provider=provider, token_count=token_count))
 
-    await retry_database_operation(_work)
+    await database.retry_database_operation(_work)
 
 
 async def list_sessions(user_id: str) -> list[dict[str, Any]]:

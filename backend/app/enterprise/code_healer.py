@@ -21,7 +21,8 @@ from starlette.responses import JSONResponse, Response
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from app.enterprise.database import IS_COCKROACH, IS_POSTGRES, execute, fetch_all, fetch_one
+from app.enterprise import database
+from app.enterprise.database import execute, fetch_all, fetch_one
 
 
 class SentinelPatchRequest(BaseModel):
@@ -78,10 +79,10 @@ class SentinelPolicy:
 
 
 async def init_sentinel_schema() -> None:
-    if IS_COCKROACH:
+    if database.IS_COCKROACH:
         serial_pk = "INT8 PRIMARY KEY DEFAULT unique_rowid()"
     else:
-        serial_pk = "BIGSERIAL PRIMARY KEY" if IS_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+        serial_pk = "BIGSERIAL PRIMARY KEY" if database.IS_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
     await execute(
         f"""
         CREATE TABLE IF NOT EXISTS code_diagnostics (

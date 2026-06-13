@@ -9,7 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 
-from app.enterprise.normalized_database import init_normalized_schema, upsert_user, SessionLocal
+from app.enterprise import normalized_database
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -53,9 +53,9 @@ async def me(current_user: str = Depends(get_current_user)) -> dict[str, Any]:
 @router.post("/provider")
 async def provider_login(request: ProviderAuthRequest) -> dict[str, Any]:
     user_id = f"{request.provider}:{request.provider_user_id}"
-    await init_normalized_schema()
-    async with SessionLocal() as db:
+    await normalized_database.init_normalized_schema()
+    async with normalized_database.SessionLocal() as db:
         async with db.begin():
-            await upsert_user(db, user_id=user_id, name=request.name, email=request.email)
+            await normalized_database.upsert_user(db, user_id=user_id, name=request.name, email=request.email)
     token = create_access_token({"sub": user_id, "name": request.name})
     return {"access_token": token, "token_type": "bearer", "user": {"id": user_id, "name": request.name, "email": request.email}}
