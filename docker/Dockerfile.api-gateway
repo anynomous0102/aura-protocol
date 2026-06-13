@@ -30,8 +30,8 @@ COPY docker/api-gateway-start.sh /usr/local/bin/api-gateway-start.sh
 
 # 5. Keep source immutable while leaving runtime data writable
 RUN mkdir -p /app/backend/data \
-    && chown -R root:root /app/backend/app \
-    && chmod -R a-w /app/backend/app \
+    && chown -R root:root /app/backend \
+    && find /app/backend -type f -name '*.py' -exec chmod a-w {} + \
     && chown -R aura:aura /app/backend/data \
     && chmod -R u+rwX /app/backend/data \
     && chmod +x /usr/local/bin/assert_runtime_permissions.py /usr/local/bin/api-gateway-start.sh
