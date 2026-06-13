@@ -2943,11 +2943,11 @@ export const FloatingSummarizer: React.FC<FloatingSummarizerProps> = ({ visible,
       }}
     >
       <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 700, color: "var(--t1)" }}>
-        Gemini Amalgamation
+        AURA Supervisor
       </div>
       <div style={{ padding: 12 }}>
         <button className="btn-primary full" onClick={onAmalgamate} disabled={loading}>
-          {loading ? "Synthesizing..." : "Gemini Amalgamation"}
+          {loading ? "Synthesizing..." : "Create Best Answer"}
         </button>
         {summary && (
           <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.6, color: "var(--t2)", maxHeight: 220, overflowY: "auto" }} className="custom-scrollbar">

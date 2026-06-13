@@ -12,6 +12,7 @@ class TargetNode(str, Enum):
     DEEPSEEK = "deepseek"
     MISTRAL = "mistral"
     CLAUDE = "claude"
+    GROQ = "groq"
 
 
 class NodeHealth(BaseModel):
@@ -43,4 +44,3 @@ SAFE_DEFAULT_DECISION = RoutingDecision(
     confidence=0.0,
     fallback=TargetNode.MISTRAL,
 )
-

@@ -847,25 +847,12 @@ export default function App() {
 
     const immediateTargetNodes = targetMode === "swarm" ? connected : connected.filter(m => m.id === targetMode);
     if (immediateTargetNodes.length === 0) return;
-    if (immediateTargetNodes.length > 1 && isCouncilMode) {
-      setCards([{
-        id: "council",
-        name: "AURA Council Consensus",
-        provider: `${immediateTargetNodes.length} Nodes Synchronized`,
-        hex: "#F59E0B",
-        tw: "bg-amber-500",
-        cardId: `council-${sessionId}`,
-        state: "loading",
-        messages: [{ role: "user", text: q }],
-      }]);
-    } else {
-      setCards(immediateTargetNodes.map(m => ({
-        ...m,
-        cardId: `${m.id}-${sessionId}`,
-        state: "loading",
-        messages: [{ role: "user", text: q }],
-      })));
-    }
+    setCards(immediateTargetNodes.map(m => ({
+      ...m,
+      cardId: `${m.id}-${sessionId}`,
+      state: "loading",
+      messages: [{ role: "user", text: q }],
+    })));
 
     void (async () => {
     const controller = new AbortController();
@@ -961,30 +948,6 @@ export default function App() {
           .filter((result): result is PromiseFulfilledResult<{ name: string; text: string }> => result.status === "fulfilled")
           .map(result => result.value);
         setCouncilRawOutputs(rawResponses);
-        if (rawResponses.length === 0) return;
-
-        const consensusCard: CardData = {
-          id: "council",
-          name: "AURA Council Consensus",
-          provider: `${rawResponses.length}/${targetNodes.length} Nodes Verified`,
-          hex: "#F59E0B",
-          tw: "bg-amber-500",
-          cardId: `council-${sessionId}`,
-          state: "loading",
-          messages: [{ role: "user", text: q }],
-        };
-        setCards(p => [...p, consensusCard]);
-
-        let synthPrompt = `You are the Master Synthesizer. Cross-reference the provided model outputs. Identify factual contradictions. Discard anomalies and hallucinations. Output only the verified consensus in clean prose.\n\nOriginal query: "${q}"\n\n`;
-        rawResponses.forEach((r) => {
-          synthPrompt += `[Provider: ${r.name}]:\n${r.text}\n\n---\n\n`;
-        });
-
-        const finalAnswer = await callAI("aura", [{ role: "user", text: synthPrompt }], "You are the AURA Master Synthesizer. Cross-reference the provided model outputs. Identify factual contradictions. Discard anomalies and hallucinations. Output only the verified consensus in clean prose.", user.email ?? user.name, sessionId);
-
-        const formattedConsensus = `🧠 Council Consensus Achieved\nSynthesized insights from ${targetNodes.map(n => n.name).join(", ")}.\n\n${finalAnswer}`;
-
-        setCards(p => p.map(c => c.cardId === consensusCard.cardId ? { ...c, state: "complete", messages: [...c.messages, { role: "model", text: formattedConsensus }] } : c));
 
       } catch (err) {
         setCards(p => p.map(c => c.id === "council" ? { ...c, state: "error", messages: [...c.messages, { role: "model", text: "Council synthesis failed after individual model fan-out completed." }] } : c));
@@ -1001,7 +964,7 @@ export default function App() {
 
       setCards(initial);
 
-      void Promise.all(initial.map(async (card) => {
+      void Promise.allSettled(initial.map(async (card) => {
         try {
           const resp = await callAI(card, [{ role: "user", text: q }], null, user.email ?? user.name, sessionId);
           if (resp.startsWith("[Connection Error:")) throw new Error(resp);
@@ -1040,11 +1003,18 @@ export default function App() {
           }
 
           setCards(p => p.map(c => c.cardId === card.cardId ? { ...c, state: "complete", messages: [...c.messages, { role: "model", text: resp }] } : c));
+          return { name: card.name, text: resp };
         } catch (err: any) {
           const detail = err instanceof Error ? err.message : "Connection failed.";
           setCards(p => p.map(c => c.cardId === card.cardId ? { ...c, state: "error", messages: [...c.messages, { role: "model", text: detail }] } : c));
+          throw err;
         }
-      }));
+      })).then((settledResponses) => {
+        const rawResponses = settledResponses
+          .filter((result): result is PromiseFulfilledResult<{ name: string; text: string }> => result.status === "fulfilled")
+          .map(result => result.value);
+        setCouncilRawOutputs(rawResponses);
+      });
     }
   }, [query, connected, user.email, user.name, user.isAuthenticated, targetMode, isCouncilMode, secureJsonRequest]);
 
@@ -1226,6 +1196,11 @@ export default function App() {
     "--btn-bg": "#D97706",
     "--btn-text": "#FFFFFF",
   };
+  const supervisorReady =
+    route === "session" &&
+    cards.length > 1 &&
+    cards.every((card) => card.state !== "loading") &&
+    councilRawOutputs.length > 1;
 
   return (
     <>
@@ -2618,7 +2593,7 @@ export default function App() {
           overflow: hidden;
           white-space: nowrap;
           border-right: 3px solid currentColor;
-          font-family: 'Courier New', Courier, monospace;
+          font-family: Arial, Helvetica, sans-serif;
           box-sizing: content-box;
           width: 0;
           padding-right: 0.16em;
@@ -3430,7 +3405,7 @@ export default function App() {
         </main>
         <AnimatePresence>
           <FloatingSummarizer
-            visible={isCouncilMode && councilRawOutputs.length > 1 && cards.some((c) => c.state === "complete")}
+            visible={supervisorReady}
             loading={isAmalgamating}
             summary={amalgamatedSummary}
             onAmalgamate={handleGeminiAmalgamation}

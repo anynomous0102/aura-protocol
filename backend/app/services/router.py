@@ -17,9 +17,12 @@ from app.services.provider_adapters import (
     AIProviderAdapter,
     AnthropicAdapter,
     GeminiAdapter,
+    GroqAdapter,
+    GroqPersonaAdapter,
     HuggingFaceAdapter,
     OpenAIAdapter,
     OpenAICompatibleAdapter,
+    env_key_pool,
 )
 
 
@@ -36,21 +39,68 @@ def create_provider_adapter(node: TargetNode) -> AIProviderAdapter:
         return GeminiAdapter()
     if node == TargetNode.CLAUDE:
         return AnthropicAdapter()
+    if node == TargetNode.GROQ:
+        return GroqAdapter()
     if node == TargetNode.DEEPSEEK:
         return OpenAICompatibleAdapter(
             base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
-            api_key=os.getenv("DEEPSEEK_API_KEY", ""),
+            api_keys=env_key_pool("DEEPSEEK_API_KEY"),
             model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
             provider_name="deepseek",
         )
     if node == TargetNode.MISTRAL:
         return OpenAICompatibleAdapter(
             base_url=os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1"),
-            api_key=os.getenv("MISTRAL_API_KEY", ""),
+            api_keys=env_key_pool("MISTRAL_API_KEY"),
             model=os.getenv("MISTRAL_MODEL", "mistral-large-latest"),
             provider_name="mistral",
         )
     raise ValueError(f"No provider adapter registered for {node.value}")
+
+
+def create_provider_adapter_for_model(model_id: str) -> AIProviderAdapter:
+    normalized = model_id.lower().strip()
+    if normalized == "groq-sonnet-4-6-persona":
+        return GroqPersonaAdapter()
+    if normalized.startswith("groq:") or normalized.startswith("llama"):
+        return GroqAdapter()
+    if normalized.startswith("openai/") or normalized.startswith("anthropic/") or normalized.startswith("google/"):
+        return OpenAICompatibleAdapter(
+            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            api_keys=env_key_pool("OPENROUTER_API_KEY") or env_key_pool("OPENROUTER_DEFAULT_KEY"),
+            model=model_id,
+            provider_name="openrouter",
+        )
+    if normalized.startswith("meta-llama/") or normalized.startswith("huggingface:"):
+        return HuggingFaceAdapter()
+    return create_provider_adapter(model_id_to_target_node(model_id))
+
+
+def model_id_to_target_node(model_id: str) -> TargetNode:
+    normalized = model_id.lower().strip()
+    if normalized in {"aura", "supervisor", "gemini"}:
+        return TargetNode.GEMINI
+    if normalized in {"gpt4", "gpt-4o", "openai"}:
+        return TargetNode.GPT4
+    if normalized.startswith("claude"):
+        return TargetNode.CLAUDE
+    if normalized.startswith("deepseek"):
+        return TargetNode.DEEPSEEK
+    if normalized.startswith("mistral"):
+        return TargetNode.MISTRAL
+    if normalized.startswith("groq") or normalized.startswith("llama"):
+        return TargetNode.GROQ
+    return TargetNode.MISTRAL
+
+
+async def dispatch_model_id(
+    model_id: str,
+    prompt: str,
+    conversation_history: List[Dict[str, str]],
+) -> tuple[str, str]:
+    adapter = create_provider_adapter_for_model(model_id)
+    response = await adapter.generate_response(prompt, conversation_history)
+    return response, adapter.provider_name
 
 
 def _db_path() -> str:

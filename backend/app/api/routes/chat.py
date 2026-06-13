@@ -10,8 +10,7 @@ from app.enterprise.database import regional_uuidv7
 from app.enterprise.normalized_database import append_message, list_sessions
 from app.enterprise.redis_runtime import redis_runtime
 from app.enterprise.tracing import get_tracer, inject_trace_metadata
-from app.models.routing import SAFE_DEFAULT_DECISION
-from app.services.router import dispatch_to_node, get_supervisor_routing_decision
+from app.services.router import dispatch_model_id, dispatch_to_node, get_supervisor_routing_decision
 
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -41,16 +40,20 @@ async def chat(request: ChatRequest, current_user: str = Depends(get_current_use
     with tracer.start_as_current_span("api.chat") as span:
         history = [{"role": item.role, "content": item.normalized_content} for item in request.messages]
         prompt = next((item["content"] for item in reversed(history) if item["role"] == "user"), "")
-        decision = await get_supervisor_routing_decision(prompt, history) if request.model_id == "aura" else SAFE_DEFAULT_DECISION
-        response_text = await dispatch_to_node(decision, prompt, history)
+        if request.model_id == "aura":
+            decision = await get_supervisor_routing_decision(prompt, history)
+            response_text = await dispatch_to_node(decision, prompt, history)
+            provider = decision.target.value
+        else:
+            response_text, provider = await dispatch_model_id(request.model_id, prompt, history)
         await append_message(user_id=current_user, session_id=request.session_id, role="user", content=prompt, provider=request.model_id)
-        await append_message(user_id=current_user, session_id=request.session_id, role="model", content=response_text, provider=decision.target.value)
+        await append_message(user_id=current_user, session_id=request.session_id, role="model", content=response_text, provider=provider)
         metadata = inject_trace_metadata({"source": "api.chat"})
         if span is not None:
             span.set_attribute("messaging.system", "redis")
             span.set_attribute("messaging.destination.name", "aura:p2p:gossip")
             span.set_attribute("aura.chat.session_id", request.session_id)
-            span.set_attribute("aura.chat.provider", decision.target.value)
+            span.set_attribute("aura.chat.provider", provider)
         await redis_runtime.rpush_json(
             "aura:p2p:gossip",
             {
@@ -58,12 +61,12 @@ async def chat(request: ChatRequest, current_user: str = Depends(get_current_use
                 "payload": {
                     "session_id": request.session_id,
                     "user_id": current_user,
-                    "provider": decision.target.value,
+                    "provider": provider,
                 },
                 "metadata": metadata,
             },
         )
-        return {"text": response_text, "provider": decision.target.value}
+        return {"text": response_text, "provider": provider}
 
 
 @router.get("/chats/sessions")
