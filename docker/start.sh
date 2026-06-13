@@ -7,6 +7,12 @@ set -euo pipefail
 
 export PORT BACKEND_PORT
 
+if [ "$(id -u)" = "0" ]; then
+    mkdir -p "$AURA_DATA_DIR/docs" "$AURA_DATA_DIR/chroma_db" /run/nginx /var/cache/nginx /var/lib/nginx /var/log/nginx /etc/nginx/conf.d
+    chown -R aura:aura "$AURA_DATA_DIR" /run/nginx /var/cache/nginx /var/lib/nginx /var/log/nginx /etc/nginx/conf.d
+    exec gosu aura "$0" "$@"
+fi
+
 mkdir -p "$AURA_DATA_DIR/docs" "$AURA_DATA_DIR/chroma_db"
 
 envsubst '${PORT} ${BACKEND_PORT}' \
