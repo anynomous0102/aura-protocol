@@ -968,13 +968,14 @@ interface SettingsModalProps {
 export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps>(({
   onClose, theme, setTheme, models, setModels, connected, setConnected, user, setUser, onOAuthLogin, onLogout, onShowWalletModal
 }, ref) => {
-  const [tab, setTab] = useState<"models" | "appearance" | "profile">("models");
+  const [tab, setTab] = useState<"nodes" | "appearance" | "profile" | "models">("nodes");
   const [addingNode, setAddingNode] = useState(false);
   const [nProv, setNProv] = useState("");
   const [nName, setNName] = useState("");
   const [nAddress, setNAddress] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const [isAuthenticating, setIsAuthenticating] = useState<string | null>(null);
+  const [settingsModelSearch, setSettingsModelSearch] = useState("");
 
   // BYOK (Bring Your Own Key) Dynamic State
   const [addingKey, setAddingKey] = useState(false);
@@ -1434,9 +1435,10 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
   };
 
   const TABS = [
-    { id: "models", label: "Network Nodes" },
+    { id: "nodes", label: "Network Nodes" },
     { id: "appearance", label: "Appearance" },
     { id: "profile", label: "Profile" },
+    { id: "models", label: "Models" },
   ] as const;
 
   return (
@@ -1454,7 +1456,7 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
         <div className="settings-body">
           <button className="s-close" onClick={onClose}><X size={16} /></button>
 
-          {tab === "models" && (
+          {tab === "nodes" && (
             <div className="s-section">
               <div className="s-sec-header">
                 <div>
@@ -1787,7 +1789,7 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
               </div>
 
               {/* ── MODEL ROWS (ALL NODES) ── */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "calc(100% - 30px)" }}>
+              <div style={{ display: "none", flexDirection: "column", gap: 8, width: "calc(100% - 30px)" }}>
                 {models
                   .filter(
                     (m) =>
@@ -1940,6 +1942,110 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
                 </div>
               )}
 
+            </div>
+          )}
+
+          {tab === "models" && (
+            <div className="s-section">
+              <div className="s-sec-header">
+                <div>
+                  <h3 className="s-title">Models</h3>
+                  <p className="s-sub">Search and manage every model available in AURA.</p>
+                </div>
+              </div>
+
+              <div style={{ width: "calc(100% - 30px)", marginBottom: 12 }}>
+                <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                  <Search size={14} style={{ position: "absolute", left: 12, color: "var(--gold)", opacity: 0.75 }} />
+                  <input
+                    type="text"
+                    value={settingsModelSearch}
+                    onChange={(e) => setSettingsModelSearch(e.target.value)}
+                    placeholder="Search models & providers..."
+                    style={{
+                      width: "100%",
+                      background: "var(--bg2)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      padding: "10px 12px 10px 36px",
+                      fontSize: 13,
+                      color: "var(--t1)",
+                      outline: "none",
+                      fontFamily: "inherit",
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "calc(100% - 30px)" }}>
+                {models
+                  .filter((m) => {
+                    const term = settingsModelSearch.trim().toLowerCase();
+                    return (
+                      !term ||
+                      m.name.toLowerCase().includes(term) ||
+                      m.provider.toLowerCase().includes(term)
+                    );
+                  })
+                  .sort((a, b) => modelAvailabilityRank(a) - modelAvailabilityRank(b) || a.name.localeCompare(b.name))
+                  .map((m) => {
+                    const on = connected.some((c) => c.id === m.id);
+                    return (
+                      <div key={m.id} className="model-row">
+                        <div className="mr-dot" style={{ background: m.hex }} />
+                        <div style={{ flex: 1 }}>
+                          <div className="mr-name">
+                            {m.name}
+                            {m.isCustom && <span className="badge">custom node</span>}
+                            {(m.provider === "OpenRouter" || m.provider.includes("OpenRouter")) && typeof m.isFree === "boolean" && (
+                              <span
+                                style={{
+                                  fontSize: 9,
+                                  padding: "1px 6px",
+                                  borderRadius: 20,
+                                  fontWeight: 700,
+                                  letterSpacing: "0.04em",
+                                  background: m.isFree
+                                    ? "rgba(34,197,94,0.12)"
+                                    : "rgba(245,158,11,0.10)",
+                                  color: m.isFree ? "#22C55E" : "var(--gold)",
+                                  marginLeft: 4,
+                                }}
+                              >
+                                {m.isFree ? "FREE" : "PAID"}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mr-prov">{m.provider}</div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                          {m.isCustom && (
+                            <button
+                              onClick={() => handleDeleteNode(m.id)}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "#ef4444",
+                                fontSize: 12,
+                                fontWeight: 700,
+                                cursor: "pointer",
+                              }}
+                            >
+                              Remove
+                            </button>
+                          )}
+                          <button
+                            className={`toggle ${on ? "on" : ""}`}
+                            style={{ "--on": m.hex } as React.CSSProperties}
+                            onClick={() => toggleConnectedModel(m)}
+                          >
+                            <motion.div className="t-knob" animate={{ x: on ? 20 : 2 }} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
           )}
 
