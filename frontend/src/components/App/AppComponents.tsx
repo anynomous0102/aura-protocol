@@ -1428,6 +1428,11 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
     setIsAuthenticating(null);
   };
 
+  const openAddModels = () => {
+    handleProviderChange("openrouter");
+    setAddingKey(true);
+  };
+
   const TABS = [
     { id: "models", label: "Network Nodes" },
     { id: "appearance", label: "Appearance" },
@@ -1752,29 +1757,34 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
                 )}
               </div>
 
-              {/* ── HF DIRECTORY BUTTON ── */}
-              <button
-                onClick={() => setIsHfDirectoryOpen(true)}
+              <div
                 style={{
                   width: "calc(100% - 30px)",
-                  padding: "12px",
-                  background: "#CA8A04",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 12,
-                  fontWeight: 700,
-                  fontSize: 13,
-                  cursor: "pointer",
                   marginBottom: 16,
                   display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 8,
-                  transition: "filter 0.15s",
+                  flexDirection: "column",
+                  gap: 10,
                 }}
               >
-                <span style={{ fontSize: "1.1rem" }}>🤗</span> Browse Open-Source Models (Hugging Face)
-              </button>
+                <button
+                  className="hf-directory-button"
+                  onClick={() => setIsHfDirectoryOpen(true)}
+                >
+                  <span style={{ fontSize: "1.1rem" }}>🤗</span> Browse Open-Source Models (Hugging Face)
+                </button>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button className="btn-social" onClick={openAddModels} style={{ flex: 1, minWidth: 160 }}>
+                    <Plus size={16} /> Add Models
+                  </button>
+                  <button className="btn-social" onClick={() => setAddingNode(true)} style={{ flex: 1, minWidth: 200 }}>
+                    <Network size={16} /> Connect P2P Node (BYOC)
+                  </button>
+                  <button className="btn-social" onClick={() => setAddingKey(true)} style={{ flex: 1, minWidth: 200 }}>
+                    <Key size={16} /> Bring Your Own Key (BYOK)
+                  </button>
+                </div>
+              </div>
 
               {/* ── MODEL ROWS (ALL NODES) ── */}
               <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "calc(100% - 30px)" }}>
@@ -1930,19 +1940,6 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
                 </div>
               )}
 
-              {/* ── NEW ADVANCED CONNECTIONS SECTION IN PROFILE ── */}
-              <div style={{ marginTop: 32, paddingTop: 24, borderTop: "1px solid var(--border)", width: "calc(100% - 30px)" }}>
-                <h3 className="s-title" style={{ fontSize: 16, marginBottom: 8 }}>Advanced Integrations</h3>
-                <p className="s-sub" style={{ marginBottom: 16 }}>Connect external computing resources or supply your own developer keys.</p>
-                <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-                  <button className="btn-social" onClick={() => setAddingNode(true)} style={{ flex: 1, minWidth: "200px" }}>
-                    <Network size={16} /> Connect P2P Node (BYOC)
-                  </button>
-                  <button className="btn-social" onClick={() => setAddingKey(true)} style={{ flex: 1, minWidth: "200px" }}>
-                    <Key size={16} /> Bring Your Own Key (BYOK)
-                  </button>
-                </div>
-              </div>
             </div>
           )}
 

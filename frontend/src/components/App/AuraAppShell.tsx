@@ -1176,6 +1176,8 @@ export default function App() {
     "--orb-glow": "rgba(37,99,235,0.4)",
     "--btn-bg": "#D2E3FC",
     "--btn-text": "#050D18",
+    "--hf-button-bg": "#374151",
+    "--hf-button-text": "#F8FAFC",
   } : {
     "--bg": "#F9F7F2",
     "--bg2": "#FFFFFF",
@@ -1195,6 +1197,8 @@ export default function App() {
     "--orb-glow": "rgba(217,119,6,0.22)",
     "--btn-bg": "#D97706",
     "--btn-text": "#FFFFFF",
+    "--hf-button-bg": "#FFF7E6",
+    "--hf-button-text": "#1A1A1A",
   };
   const supervisorReady =
     route === "session" &&
@@ -2087,6 +2091,30 @@ export default function App() {
           background: var(--gold-lt);
           color: var(--gold);
           font-weight: 600;
+        }
+
+        .hf-directory-button {
+          width: 100%;
+          min-height: 52px;
+          padding: 12px 14px;
+          background: var(--hf-button-bg);
+          color: var(--hf-button-text);
+          border: 1px solid var(--border2);
+          border-radius: 12px;
+          font-family: 'Sora', sans-serif;
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          transition: background 0.2s, border-color 0.2s, transform 0.15s;
+        }
+
+        .hf-directory-button:hover {
+          border-color: var(--gold);
+          transform: translateY(-1px);
         }
         
         .settings-body {
@@ -2985,7 +3013,6 @@ export default function App() {
         {/* ── MOBILE HEADER ── */}
         <div className="mobile-header">
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div className="s-icon" style={{ width: 32, height: 32, fontSize: 16 }}>∀</div>
             <div className="s-name" style={{ fontSize: 18, fontWeight: 700, color: "var(--t1)" }}>AURA</div>
           </div>
           <button className="icon-btn lg" onClick={() => setIsMobileMenuOpen(true)}>
@@ -2997,7 +3024,6 @@ export default function App() {
         <aside className={`sidebar ${isMobileMenuOpen ? "open" : ""} ${sidebarCollapsed ? "collapsed" : ""}`}>
           <div className="s-brand">
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div className="s-icon">∀</div>
               <div className="s-name">AURA</div>
             </div>
 
