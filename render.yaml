@@ -28,6 +28,10 @@ services:
         value: "false"
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: UPSTASH_REDIS_URL
+        sync: false
       - key: GEMINI_MODEL
         value: gemini-2.5-flash
       - key: GEMINI_MODEL_CHAIN
@@ -37,6 +41,8 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_API_KEY_1
+        sync: false
+      - key: GOOGLE_API_KEY
         sync: false
       - key: GEMINI_CLAUDE_API_KEY
         sync: false
