@@ -11,7 +11,7 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     autoDeployTrigger: commit
-    healthCheckPath: /api/protocols/status
+    healthCheckPath: /health
     maxShutdownDelaySeconds: 120
     disk:
       name: aura-runtime-data

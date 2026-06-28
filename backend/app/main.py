@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import logging
 import os
+import sys
+from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
+from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.enterprise.tracing import configure_tracing
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
+logger = logging.getLogger("aura.startup")
 
 configure_tracing("aura-api-gateway")
 
@@ -19,12 +33,18 @@ from app.enterprise.permission_guard import assert_python_tree_read_only
 from app.enterprise.redis_runtime import redis_runtime
 from app.enterprise.security_headers import SecurityHeadersMiddleware
 from app.middleware.hmac_verifier import HMACVerificationMiddleware
+from app.services.provider_adapters import env_key_pool
+
+
+db_connected = False
+redis_connected = False
+keypool_initialized = False
 
 
 def _cors_origins() -> list[str]:
     raw = os.getenv(
         "AURA_ALLOWED_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000,https://aura-protocol.onrender.com",
+        "http://localhost:3000,http://127.0.0.1:3000,https://aura-protocol.onrender.com,https://aura-protocol.vercel.app",
     )
     return [item.strip() for item in raw.split(",") if item.strip()]
 
@@ -52,9 +72,137 @@ async def _init_database_schemas() -> None:
         await init_sentinel_schema()
 
 
+def _require_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"Required environment variable is not set: {name}")
+    return value
+
+
+def _provider_key_count(*names: str) -> int:
+    return sum(len(env_key_pool(name)) for name in names)
+
+
+def _validate_key_pools() -> None:
+    required_pools = {
+        "OPENROUTER_API_KEY": ("OPENROUTER_API_KEY", "OPENROUTER_DEFAULT_KEY"),
+        "GOOGLE_API_KEY": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+        "MISTRAL_API_KEY": ("MISTRAL_API_KEY",),
+        "GROQ_API_KEY": ("GROQ_API_KEY",),
+    }
+    missing: list[str] = []
+    for display_name, env_names in required_pools.items():
+        count = _provider_key_count(*env_names)
+        logger.debug("Key pool validated: %s aliases=%s count=%s", display_name, ",".join(env_names), count)
+        if count == 0:
+            missing.append(display_name)
+    if missing:
+        joined = ", ".join(missing)
+        raise RuntimeError(f"Required API key pools are empty: {joined}")
+
+
+async def _test_database_connection() -> None:
+    global db_connected
+
+    db_connected = False
+    _require_env("DATABASE_URL")
+    logger.debug("Testing database connection with configured DATABASE_URL")
+    async with database.engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+    db_connected = True
+    logger.info("Database connection test succeeded")
+
+
+async def _test_redis_connection() -> None:
+    global redis_connected
+
+    redis_connected = False
+    _require_env("UPSTASH_REDIS_URL")
+    logger.debug("Testing Upstash Redis connection")
+    await redis_runtime.connect()
+    if redis_runtime.client is None:
+        raise RuntimeError("Redis client was not initialized after connect()")
+    await redis_runtime.client.ping()
+    redis_connected = True
+    logger.info("Redis connection test succeeded")
+
+
+def _initialize_key_pools() -> None:
+    global keypool_initialized
+
+    keypool_initialized = False
+    _require_env("JWT_SECRET")
+    logger.debug("Validating JWT_SECRET and provider API key pools")
+    _validate_key_pools()
+    keypool_initialized = True
+    logger.info("KeyPool validation succeeded")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    logger.info("AURA startup begin")
+    try:
+        logger.debug("Checking runtime source permissions")
+        assert_python_tree_read_only(Path(__file__).resolve().parents[1])
+
+        try:
+            await _test_database_connection()
+        except Exception:
+            logger.exception("Database startup check failed")
+            raise
+
+        try:
+            await _test_redis_connection()
+        except Exception:
+            logger.exception("Redis startup check failed")
+            raise
+
+        try:
+            _initialize_key_pools()
+        except Exception:
+            logger.exception("KeyPool startup check failed")
+            raise
+
+        try:
+            logger.debug("Initializing database schemas")
+            await _init_database_schemas()
+            logger.info("Database schema initialization succeeded")
+        except Exception:
+            logger.exception("Database schema initialization failed")
+            raise
+
+        logger.info("AURA startup complete")
+        yield
+    except Exception:
+        logger.exception("AURA startup failed; shutting down gracefully")
+        try:
+            await redis_runtime.close()
+        except Exception:
+            logger.exception("Redis cleanup failed after startup error")
+        try:
+            await close_engine()
+        except Exception:
+            logger.exception("Database cleanup failed after startup error")
+        raise
+    finally:
+        logger.info("AURA shutdown begin")
+        try:
+            await redis_runtime.close()
+            logger.debug("Redis shutdown complete")
+        except Exception:
+            logger.exception("Redis shutdown failed")
+        try:
+            await close_engine()
+            logger.debug("Database shutdown complete")
+        except Exception:
+            logger.exception("Database shutdown failed")
+        logger.info("AURA shutdown complete")
+
+
 def create_app() -> FastAPI:
     configure_tracing("aura-api-gateway")
-    app = FastAPI(title="AURA Decentralized Aggregator Bridge")
+    logger.debug("Creating FastAPI application")
+    app = FastAPI(title="AURA Decentralized Aggregator Bridge", lifespan=lifespan)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -77,21 +225,23 @@ def create_app() -> FastAPI:
     app.include_router(sentinel.router)
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health() -> dict[str, object]:
+        return {"status": "ok", "timestamp": datetime.utcnow()}
 
-    @app.on_event("startup")
-    async def startup() -> None:
-        assert_python_tree_read_only(Path(__file__).resolve().parents[1])
-        await redis_runtime.connect()
-        await _init_database_schemas()
-
-    @app.on_event("shutdown")
-    async def shutdown() -> None:
-        await redis_runtime.close()
-        await close_engine()
+    @app.get("/api/v1/debug/status")
+    async def debug_status() -> dict[str, object]:
+        return {
+            "database": "✅" if db_connected else "❌",
+            "redis": "✅" if redis_connected else "❌",
+            "keys_loaded": "✅" if keypool_initialized else "❌",
+            "timestamp": datetime.utcnow(),
+        }
 
     return app
 
 
-app = create_app()
+try:
+    app = create_app()
+except Exception:
+    logger.exception("FastAPI application creation failed")
+    raise

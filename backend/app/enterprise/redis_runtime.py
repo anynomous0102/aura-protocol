@@ -44,6 +44,10 @@ class RedisRuntime:
         return os.getenv("AURA_REQUIRE_REDIS", "").lower() in {"1", "true", "yes"}
 
     def _load_endpoints(self) -> list[RedisEndpoint]:
+        upstash_url = os.getenv("UPSTASH_REDIS_URL", "").strip()
+        if upstash_url:
+            return [RedisEndpoint(url=upstash_url, region=self.region)]
+
         raw_global = os.getenv("GLOBAL_REDIS_URLS", "").strip()
         if raw_global:
             endpoints: list[RedisEndpoint] = []

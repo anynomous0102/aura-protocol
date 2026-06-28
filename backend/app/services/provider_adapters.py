@@ -150,7 +150,7 @@ class GeminiAdapter(AIProviderAdapter):
     provider_name = "gemini"
 
     def __init__(self) -> None:
-        self.api_keys = env_key_pool("GEMINI_API_KEY")
+        self.api_keys = env_key_pool("GEMINI_API_KEY") or env_key_pool("GOOGLE_API_KEY")
         self.model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     async def generate_response(self, prompt: str, conversation_history: List[Dict[str, str]]) -> str:
