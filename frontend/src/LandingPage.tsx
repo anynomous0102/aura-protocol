@@ -14,7 +14,7 @@ const AURA_THEME = {
 };
 
 export default function LandingPage({ onOAuthLogin, onSkip, onShowWalletModal }: LandingPageProps) {
-  const [loading, setLoading] = useState<"google" | null>(null);
+  const [loading, setLoading] = useState<"google" | "github" | null>(null);
   const [error, setError] = useState("");
   const [systemDark, setSystemDark] = useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches);
 
@@ -29,7 +29,7 @@ export default function LandingPage({ onOAuthLogin, onSkip, onShowWalletModal }:
   const isDark = selectedTheme === "dark" || (selectedTheme === "system" && systemDark);
   const theme = isDark ? AURA_THEME.dark : AURA_THEME.light;
 
-  const login = async (provider: "google") => {
+  const login = async (provider: "google" | "github") => {
     setError("");
     setLoading(provider);
     try {
@@ -81,6 +81,17 @@ export default function LandingPage({ onOAuthLogin, onSkip, onShowWalletModal }:
             >
               <KeyRound size={18} />
               {loading === "google" ? "Connecting..." : "Continue with Google"}
+              <ArrowRight size={17} />
+            </button>
+
+            <button
+              type="button"
+              className="auth-secondary github-auth"
+              onClick={() => login("github")}
+              disabled={loading !== null}
+            >
+              <KeyRound size={18} />
+              {loading === "github" ? "Connecting..." : "Login with GitHub"}
               <ArrowRight size={17} />
             </button>
 
@@ -214,6 +225,9 @@ export default function LandingPage({ onOAuthLogin, onSkip, onShowWalletModal }:
         .auth-secondary {
           background: var(--landing-overlay);
           color: var(--landing-text);
+        }
+        .github-auth {
+          border-color: rgba(255,255,255,0.2) !important;
         }
         .landing-error {
           margin-top: 14px;

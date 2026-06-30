@@ -2,6 +2,9 @@ import type { Message, Model } from "./types";
 import { secureFetch } from "./utils/secureFetch";
 
 export const GOOGLE_CLIENT_ID = "17620318358-elb3hcn915ik4f536rfsoo5itup40fdt.apps.googleusercontent.com";
+export const GITHUB_CLIENT_ID = "Ov23liaN2AWMm6wNOubq";
+export const GITHUB_REDIRECT_URI = "https://vercel.app";
+export const GITHUB_OAUTH_STATE_KEY = "aura_github_oauth_state";
 
 const DEFAULT_RENDER_BACKEND_URL = "https://aura-protocol.onrender.com";
 
@@ -42,6 +45,35 @@ export const loadGoogleSdk = () => {
     document.head.appendChild(script);
   });
   return googleSdkPromise;
+};
+
+const createOAuthState = (): string => {
+  const bytes = window.crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+};
+
+export const startGitHubOAuthLogin = (): void => {
+  const state = createOAuthState();
+  localStorage.setItem(GITHUB_OAUTH_STATE_KEY, state);
+
+  const authUrl = new URL("https://github.com/login/oauth/authorize");
+  authUrl.searchParams.set("client_id", GITHUB_CLIENT_ID);
+  authUrl.searchParams.set("redirect_uri", GITHUB_REDIRECT_URI);
+  authUrl.searchParams.set("scope", "user");
+  authUrl.searchParams.set("state", state);
+
+  window.location.assign(authUrl.toString());
+};
+
+export const clearGitHubOAuthQuery = (): void => {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("code");
+  url.searchParams.delete("state");
+  url.searchParams.delete("error");
+  url.searchParams.delete("error_description");
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
 };
 
 export const getAuthHeaders = (): Record<string, string> => {

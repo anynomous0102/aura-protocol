@@ -24,14 +24,18 @@ declare global {
 import type { CardData, Message, Model } from "../../types";
 import {
   BACKEND_URL,
+  GITHUB_OAUTH_STATE_KEY,
+  GITHUB_REDIRECT_URI,
   GOOGLE_CLIENT_ID,
   INITIAL_MODELS,
   callAI,
+  clearGitHubOAuthQuery,
   getAuthHeaders,
   getDefaultConnectedModels,
   loadGoogleSdk,
   setClientAccessToken,
   sortModelsByAvailability,
+  startGitHubOAuthLogin,
 } from "../../appCore";
 import { secureFetch } from "../../utils/secureFetch";
 import {
@@ -217,6 +221,88 @@ export default function App() {
       cancelled = true;
     };
   }, [clearAccessToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const completeGitHubOAuth = async (): Promise<void> => {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code");
+      const error = params.get("error");
+
+      if (error) {
+        clearGitHubOAuthQuery();
+        toast.error(params.get("error_description") || "GitHub login was cancelled.");
+        return;
+      }
+
+      if (!code) return;
+
+      const expectedState = localStorage.getItem(GITHUB_OAUTH_STATE_KEY);
+      const returnedState = params.get("state");
+      localStorage.removeItem(GITHUB_OAUTH_STATE_KEY);
+
+      if (!expectedState || returnedState !== expectedState) {
+        clearGitHubOAuthQuery();
+        toast.error("GitHub login failed state validation.");
+        return;
+      }
+
+      try {
+        const tokenResponse = await fetch("/api/github-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code, redirect_uri: GITHUB_REDIRECT_URI }),
+        });
+        const tokenData = await tokenResponse.json();
+        if (!tokenResponse.ok || !tokenData.access_token) {
+          throw new Error(tokenData.message || "GitHub token exchange failed.");
+        }
+
+        const authResponse = await fetch(`${BACKEND_URL}/api/auth/provider-token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: "github", access_token: tokenData.access_token }),
+        });
+
+        if (authResponse.ok) {
+          const dbUser = await authResponse.json();
+          if (dbUser.access_token) {
+            await persistAccessToken(dbUser.access_token);
+          }
+          if (!cancelled) {
+            setUser({
+              name: dbUser.user.name,
+              email: dbUser.user.email,
+              photo: dbUser.user.picture,
+              isAuthenticated: true,
+            });
+            setAuthState("authenticated");
+          }
+          return;
+        }
+
+        if (!cancelled) {
+          setUser({
+            name: tokenData.user?.name || tokenData.user?.login || "GitHub User",
+            email: tokenData.user?.email || `github:${tokenData.user?.id || tokenData.user?.login}`,
+            photo: tokenData.user?.avatar_url || null,
+            isAuthenticated: true,
+          });
+          setAuthState("authenticated");
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "GitHub login failed.");
+      } finally {
+        clearGitHubOAuthQuery();
+      }
+    };
+
+    void completeGitHubOAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, [persistAccessToken, setAuthState, setUser]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setIsAppLoading(false), 2200);
@@ -498,6 +584,11 @@ export default function App() {
     }
 
     // GitHub, Meta, etc. — show login modal for name input
+    if (provider === "github") {
+      startGitHubOAuthLogin();
+      return;
+    }
+
     setPendingLoginProvider(provider);
     setProviderLoginToken("");
     setProviderLoginError("");
