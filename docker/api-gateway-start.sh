@@ -10,4 +10,4 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 python /usr/local/bin/assert_runtime_permissions.py
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --env-file /app/backend/.env

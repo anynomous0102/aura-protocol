@@ -847,7 +847,19 @@ export default function App() {
 
     const immediateTargetNodes = targetMode === "swarm" ? connected : connected.filter(m => m.id === targetMode);
     if (immediateTargetNodes.length === 0) return;
-    setCards(immediateTargetNodes.map(m => ({
+    const useSingleCouncilCard = isCouncilMode;
+    const councilCard: CardData = {
+      id: "council",
+      name: "Council Chat",
+      provider: `${immediateTargetNodes.length} models in parallel`,
+      hex: "#F6B708",
+      tw: "bg-amber-500",
+      cardId: `council-${sessionId}`,
+      state: "loading",
+      messages: [{ role: "user", text: q }],
+      councilMembers: immediateTargetNodes,
+    };
+    setCards(useSingleCouncilCard ? [councilCard] : immediateTargetNodes.map(m => ({
       ...m,
       cardId: `${m.id}-${sessionId}`,
       state: "loading",
@@ -881,19 +893,29 @@ export default function App() {
     const targetNodes = targetMode === "swarm" ? connected : connected.filter(m => m.id === targetMode);
     if (targetNodes.length === 0) return;
 
-    if (targetNodes.length > 1 && isCouncilMode) {
-      const initial: CardData[] = targetNodes.map(m => ({
-        ...m,
-        cardId: `${m.id}-${sessionId}`,
-        state: "loading",
-        messages: [{ role: "user", text: q }],
-      }));
-
-      setCards(initial);
-
+    if (isCouncilMode) {
       try {
-        const promises = initial.map(async (card) => {
-          const m = card as Model;
+        const formatCouncilText = (responses: { name: string; text: string }[], pending: number, failed: { name: string; text: string }[]) => {
+          const sections = responses.map(r => `### ${r.name}\n${r.text.trim() || "No response returned."}`);
+          const failures = failed.map(r => `### ${r.name}\n${r.text.trim() || "Model request failed."}`);
+          const status = pending > 0 ? `\n\nWaiting for ${pending} model${pending !== 1 ? "s" : ""}...` : "";
+          return [...sections, ...failures].join("\n\n---\n\n") + status;
+        };
+        const completedResponses: { name: string; text: string }[] = [];
+        const failedResponses: { name: string; text: string }[] = [];
+        const updateCouncilCard = () => {
+          const pending = targetNodes.length - completedResponses.length - failedResponses.length;
+          setCards(p => p.map(c => c.cardId === councilCard.cardId ? {
+            ...c,
+            state: pending > 0 ? "loading" : failedResponses.length === targetNodes.length ? "error" : "complete",
+            messages: [
+              { role: "user", text: q },
+              { role: "model", text: formatCouncilText(completedResponses, pending, failedResponses) }
+            ],
+          } : c));
+        };
+
+        const promises = targetNodes.map(async (m) => {
           const resp = await callAI(m, [{ role: "user", text: q }], null, user.email ?? user.name, sessionId);
           if (resp.startsWith("[Connection Error:")) throw new Error(resp);
 
@@ -929,20 +951,22 @@ export default function App() {
               }
             } catch (err) { }
           }
-          setCards(p => p.map(c => c.cardId === card.cardId ? { ...c, state: "complete", messages: [...c.messages, { role: "model", text: resp }] } : c));
-          return { name: m.name, text: resp };
+          const output = { name: m.name, text: resp };
+          completedResponses.push(output);
+          updateCouncilCard();
+          return output;
         });
 
         const settledResponses = await Promise.allSettled(promises);
         settledResponses.forEach((result, index) => {
           if (result.status === "rejected") {
-            setCards(p => p.map(c => c.cardId === initial[index].cardId ? {
-              ...c,
-              state: "error",
-              messages: [...c.messages, { role: "model", text: result.reason instanceof Error ? result.reason.message : "Model request timed out or failed." }]
-            } : c));
+            failedResponses.push({
+              name: targetNodes[index].name,
+              text: result.reason instanceof Error ? result.reason.message : "Model request timed out or failed.",
+            });
           }
         });
+        updateCouncilCard();
 
         const rawResponses = settledResponses
           .filter((result): result is PromiseFulfilledResult<{ name: string; text: string }> => result.status === "fulfilled")
@@ -1027,6 +1051,49 @@ export default function App() {
 
     try {
       const allMsgs = [...target.messages, userMsg];
+      if (target.id === "council" && target.councilMembers && target.councilMembers.length > 0) {
+        const completedResponses: { name: string; text: string }[] = [];
+        const failedResponses: { name: string; text: string }[] = [];
+        const formatCouncilText = (responses: { name: string; text: string }[], pending: number, failed: { name: string; text: string }[]) => {
+          const sections = responses.map(r => `### ${r.name}\n${r.text.trim() || "No response returned."}`);
+          const failures = failed.map(r => `### ${r.name}\n${r.text.trim() || "Model request failed."}`);
+          const status = pending > 0 ? `\n\nWaiting for ${pending} model${pending !== 1 ? "s" : ""}...` : "";
+          return [...sections, ...failures].join("\n\n---\n\n") + status;
+        };
+        const updateCouncilCard = () => {
+          const pending = target.councilMembers!.length - completedResponses.length - failedResponses.length;
+          setCards(p => p.map(c => c.cardId === cardId ? {
+            ...c,
+            state: pending > 0 ? "loading" : failedResponses.length === target.councilMembers!.length ? "error" : "complete",
+            messages: [
+              ...allMsgs,
+              { role: "model", text: formatCouncilText(completedResponses, pending, failedResponses) }
+            ],
+          } : c));
+        };
+
+        const settled = await Promise.allSettled(target.councilMembers.map(async (member) => {
+          const resp = await callAI(member, allMsgs, null, user.email ?? user.name, activeSessionId);
+          if (resp.startsWith("[Connection Error:")) throw new Error(resp);
+          const output = { name: member.name, text: resp };
+          completedResponses.push(output);
+          updateCouncilCard();
+          return output;
+        }));
+
+        settled.forEach((result, index) => {
+          if (result.status === "rejected") {
+            failedResponses.push({
+              name: target.councilMembers![index].name,
+              text: result.reason instanceof Error ? result.reason.message : "Model request timed out or failed.",
+            });
+          }
+        });
+        updateCouncilCard();
+        setCouncilRawOutputs(completedResponses);
+        return;
+      }
+
       const resp = await callAI(target, allMsgs, null, user.email ?? user.name, activeSessionId);
       const modelMsg: Message = { role: "model", text: resp };
       setCards(p => p.map(c => c.cardId === cardId ? { ...c, state: "complete", messages: [...c.messages, modelMsg] } : c));
@@ -1202,7 +1269,7 @@ export default function App() {
   };
   const supervisorReady =
     route === "session" &&
-    cards.length > 1 &&
+    councilRawOutputs.length > 1 &&
     cards.every((card) => card.state !== "loading") &&
     councilRawOutputs.length > 1;
 
@@ -3263,7 +3330,9 @@ export default function App() {
                 {/* Session header */}
                 <div className="sess-header">
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div className="sess-meta">Session stream · {cards.length} intelligent agents</div>
+                    <div className="sess-meta">
+                      Session stream · {cards.reduce((total, card) => total + (card.councilMembers?.length || 1), 0)} intelligent agents
+                    </div>
                     <div className="sess-q" title={sessionTitle}>{sessionTitle}</div>
                   </div>
                   <div className="sess-actions">
@@ -3419,6 +3488,7 @@ export default function App() {
                       onClose={() => setExpandedId(null)}
                       onFollowUp={handleFollowUp}
                       onFileUpload={handleFileUpload}
+                      userId={user.isAuthenticated ? (user.email ?? user.name) : "anonymous"}
                       uploadedFiles={uploadedFiles}
                       isUploading={isUploading}
                     />

@@ -19,6 +19,7 @@ export interface CardData extends Model {
   cardId: string;
   state: "loading" | "complete" | "error";
   messages: Message[];
+  councilMembers?: Model[];
 }
 
 export interface User {

@@ -58,21 +58,37 @@ def create_provider_adapter(node: TargetNode) -> AIProviderAdapter:
     raise ValueError(f"No provider adapter registered for {node.value}")
 
 
-def create_provider_adapter_for_model(model_id: str) -> AIProviderAdapter:
+def create_provider_adapter_for_model(model_id: str, api_key: str = "") -> AIProviderAdapter:
     normalized = model_id.lower().strip()
+    groq_model_id = model_id.split(":", 1)[1] if normalized.startswith("groq:") else model_id
     if normalized == "groq-sonnet-4-6-persona":
+        if api_key:
+            return OpenAICompatibleAdapter(
+                base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+                api_key=api_key,
+                model=os.getenv("GROQ_CLAUDE_PERSONA_MODEL", os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")),
+                provider_name="groq-persona",
+            )
         return GroqPersonaAdapter()
     if normalized.startswith("groq:") or normalized.startswith("llama"):
+        if api_key:
+            return OpenAICompatibleAdapter(
+                base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+                api_key=api_key,
+                model=groq_model_id,
+                provider_name="groq",
+            )
         return GroqAdapter()
-    if normalized.startswith("openai/") or normalized.startswith("anthropic/") or normalized.startswith("google/"):
+    if normalized.startswith("huggingface:"):
+        return HuggingFaceAdapter()
+    if "/" in normalized:
         return OpenAICompatibleAdapter(
             base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-            api_keys=env_key_pool("OPENROUTER_API_KEY") or env_key_pool("OPENROUTER_DEFAULT_KEY"),
+            api_key=api_key,
+            api_keys=None if api_key else env_key_pool("OPENROUTER_API_KEY") or env_key_pool("OPENROUTER_DEFAULT_KEY"),
             model=model_id,
             provider_name="openrouter",
         )
-    if normalized.startswith("meta-llama/") or normalized.startswith("huggingface:"):
-        return HuggingFaceAdapter()
     return create_provider_adapter(model_id_to_target_node(model_id))
 
 
@@ -97,8 +113,9 @@ async def dispatch_model_id(
     model_id: str,
     prompt: str,
     conversation_history: List[Dict[str, str]],
+    api_key: str = "",
 ) -> tuple[str, str]:
-    adapter = create_provider_adapter_for_model(model_id)
+    adapter = create_provider_adapter_for_model(model_id, api_key=api_key.strip())
     response = await adapter.generate_response(prompt, conversation_history)
     return response, adapter.provider_name
 

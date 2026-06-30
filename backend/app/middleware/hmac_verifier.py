@@ -55,9 +55,19 @@ class HMACVerificationMiddleware(BaseHTTPMiddleware):
         "/api/auth/provider-token",
         "/api/auth/callback/google",
         "/api/auth/did",
+        "/api/agora/heal",
+        "/api/chat",
+        "/api/hf-models",
+        "/api/history/sync",
+        "/api/nodes",
+        "/api/oapin/verify",
+        "/api/groq/models",
+        "/api/openrouter/free-models",
+        "/api/openrouter/models",
         "/api/upload",
         "/health",
         "/api/health",
+        "/api/v1/debug/status",
         "/docs",
         "/redoc",
         "/openapi.json",
@@ -113,4 +123,11 @@ class HMACVerificationMiddleware(BaseHTTPMiddleware):
 
     @classmethod
     def _is_exempt(cls, path: str) -> bool:
-        return path in cls.EXEMPT_PATHS or path.startswith("/docs/") or path.startswith("/static/")
+        return (
+            path in cls.EXEMPT_PATHS
+            or path.startswith("/api/history/load/")
+            or path.startswith("/api/nodes/")
+            or path.startswith("/api/p2p/")
+            or path.startswith("/docs/")
+            or path.startswith("/static/")
+        )

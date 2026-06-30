@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import asyncio
 import re
+import time
 from abc import ABC, abstractmethod
 from typing import Dict, List
 
@@ -13,6 +14,25 @@ class AIProviderError(RuntimeError):
     def __init__(self, provider: str, message: str) -> None:
         super().__init__(f"{provider} adapter failed: {message}")
         self.provider = provider
+
+
+_BAD_KEY_UNTIL: dict[tuple[str, str], float] = {}
+BAD_KEY_COOLDOWN_SECONDS = int(os.getenv("AURA_BAD_KEY_COOLDOWN_SECONDS", "120"))
+
+
+def _key_fingerprint(api_key: str) -> str:
+    return f"{api_key[:6]}:{api_key[-6:]}"
+
+
+def _is_key_on_cooldown(provider: str, api_key: str) -> bool:
+    until = _BAD_KEY_UNTIL.get((provider, _key_fingerprint(api_key)), 0)
+    return until > time.monotonic()
+
+
+def _cooldown_key(provider: str, api_key: str, status_code: int | None = None) -> None:
+    if status_code is not None and status_code < 400:
+        return
+    _BAD_KEY_UNTIL[(provider, _key_fingerprint(api_key))] = time.monotonic() + BAD_KEY_COOLDOWN_SECONDS
 
 
 class AIProviderAdapter(ABC):
@@ -63,14 +83,21 @@ class OpenAICompatibleAdapter(AIProviderAdapter):
             raise AIProviderError(self.provider_name, "API key is not configured")
         payload = {"model": self.model, "messages": self._messages(prompt, conversation_history)}
         last_error: Exception | None = None
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            for api_key in self.api_keys:
+        available_keys = [api_key for api_key in self.api_keys if not _is_key_on_cooldown(self.provider_name, api_key)]
+        if not available_keys:
+            available_keys = self.api_keys
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=5.0)) as client:
+            for api_key in available_keys:
                 headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
                 try:
                     response = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
                     response.raise_for_status()
                     data = response.json()
                     return str(data["choices"][0]["message"]["content"])
+                except httpx.HTTPStatusError as exc:
+                    last_error = exc
+                    _cooldown_key(self.provider_name, api_key, exc.response.status_code)
+                    continue
                 except (KeyError, IndexError, TypeError, httpx.HTTPError) as exc:
                     last_error = exc
                     continue
@@ -80,7 +107,7 @@ class OpenAICompatibleAdapter(AIProviderAdapter):
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {"model": self.model, "messages": self._messages(prompt, conversation_history)}
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=5.0)) as client:
                 response = await client.post(f"{self.base_url}/chat/completions", headers=headers, json=payload)
                 response.raise_for_status()
                 data = response.json()

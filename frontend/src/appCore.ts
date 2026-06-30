@@ -105,8 +105,10 @@ export const callAI = async (
   const timeoutId = setTimeout(() => controller.abort(), 180000);
 
   try {
+    const apiKey = typeof model === "string" ? "" : (model.nodeAddress || "").split("|||").pop()?.trim() || "";
     const body = JSON.stringify({
       model_id: modelId,
+      api_key: apiKey,
       messages,
       user_id: effectiveUserId,
       session_id: sessionId,

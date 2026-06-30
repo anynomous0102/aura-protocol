@@ -39,7 +39,8 @@ def configure_tracing(service_name: str) -> None:
         )
     )
     exporter = _build_exporter()
-    provider.add_span_processor(BatchSpanProcessor(exporter))
+    if exporter is not None:
+        provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
     _CONFIGURED = True
 
@@ -53,7 +54,9 @@ def _build_exporter() -> Any:
             return OTLPSpanExporter(endpoint=endpoint, insecure=os.getenv("OTEL_EXPORTER_OTLP_INSECURE", "true").lower() in {"1", "true", "yes"})
         except Exception:
             pass
-    return ConsoleSpanExporter()
+    if os.getenv("AURA_TRACE_CONSOLE", "").lower() in {"1", "true", "yes"}:
+        return ConsoleSpanExporter()
+    return None
 
 
 def get_tracer(name: str):

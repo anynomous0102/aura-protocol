@@ -24,6 +24,19 @@ import {
   normalizeApiKey,
   sortModelsByAvailability,
 } from "../../appCore";
+import {
+  apiKeyStorageKey,
+  copyApiKey,
+  loadApiKeyRecord,
+  maskApiKey,
+  removeApiKeyRecord,
+  saveApiKeyRecord,
+  storageMethodMessage,
+  validateApiKey,
+  type ApiKeyRecord,
+  type ApiKeyStatusKind,
+  type ApiKeyStorageMethod,
+} from "../../utils/apiKeyManager";
 export const Markdown: React.FC<{ text?: string }> = ({ text }) => {
   if (!text) return null;
   const blocks: { t: string; c: string }[] = [];
@@ -983,6 +996,24 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
   const [kModelId, setKModelId] = useState("anthropic/claude-3-5-sonnet");
   const [kCustomName, setKCustomName] = useState("");
   const [kValue, setKValue] = useState("");
+  const [kShowValue, setKShowValue] = useState(false);
+  const [kIsSaving, setKIsSaving] = useState(false);
+  const [kSavedRecord, setKSavedRecord] = useState<ApiKeyRecord | null>(null);
+  const [kStorageMethod, setKStorageMethod] = useState<ApiKeyStorageMethod | null>(null);
+  const [kStatus, setKStatus] = useState<{ kind: ApiKeyStatusKind; message: string } | null>(null);
+  const [kInlineError, setKInlineError] = useState("");
+  const [kConfirmReplace, setKConfirmReplace] = useState(false);
+  const [kConfirmRemove, setKConfirmRemove] = useState(false);
+  const [kCopied, setKCopied] = useState(false);
+
+  const kStorageKey = apiKeyStorageKey(kProvider, kModelId);
+
+  const showKeyStatus = (kind: ApiKeyStatusKind, message: string) => {
+    setKStatus({ kind, message });
+    window.setTimeout(() => {
+      setKStatus((current) => (current?.message === message ? null : current));
+    }, 5000);
+  };
 
   const handleProviderChange = (val: string) => {
     setKProvider(val);
@@ -998,6 +1029,17 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
     setKModelId(defs[val]?.model || "");
     setKCustomName(defs[val]?.name || "");
   };
+
+  useEffect(() => {
+    if (!addingKey) return;
+    const result = loadApiKeyRecord(kStorageKey);
+    setKSavedRecord(result.record ?? null);
+    setKStorageMethod(result.record ? result.method : null);
+    setKInlineError("");
+    setKConfirmReplace(false);
+    setKConfirmRemove(false);
+    setKCopied(false);
+  }, [addingKey, kStorageKey]);
 
   const toggleConnectedModel = (model: Model) => {
     setConnected((prev) => {
@@ -1021,9 +1063,11 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
   const [orSearch, setOrSearch] = useState("");
   const [orFilter, setOrFilter] = useState<"all" | "free" | "paid">("all");
   const [orFreeOnly, setOrFreeOnly] = useState(true);
+  const [orStatus, setOrStatus] = useState<{ kind: ApiKeyStatusKind; message: string } | null>(null);
 
   const fetchOrModels = async () => {
     setIsFetchingOr(true);
+    setOrStatus(null);
     try {
       // ✅ SECURE: Send API key in POST body, never in URL
       const cleanKey = normalizeApiKey(orKey);
@@ -1095,10 +1139,13 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
         }),
         });
       }
+      setOrStatus({ kind: "success", message: `Loaded ${newModels.length} OpenRouter models.` });
     } catch (err: any) {
-      alert(
-        `OpenRouter connection failed: ${err.message}\n\nGet a free key at openrouter.ai/keys`
-      );
+      console.warn("OpenRouter connection failed.", err);
+      setOrStatus({
+        kind: "error",
+        message: `OpenRouter connection failed: ${err?.message || "Failed to fetch"}. Check your key or backend connection, then try again.`,
+      });
     } finally {
       setIsFetchingOr(false);
     }
@@ -1162,11 +1209,11 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
             setAddingKey(false);
             setKValue("");
             setKCustomName("");
-            alert(`OpenRouter connected! ${newNodes.length} models added to your council.`);
+            showKeyStatus("success", `OpenRouter connected! ${newNodes.length} models added to your council.`);
             return;
           }
         }
-        alert(orData?.message || "Failed to fetch OpenRouter models. Check your OpenRouter key and try again.");
+        showKeyStatus("error", orData?.message || "Failed to fetch OpenRouter models. Check your OpenRouter key and try again.");
         return;
       }
 
@@ -1183,7 +1230,7 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
         });
         const groqData = await groqRes.json().catch(() => null);
         if (!groqRes.ok || groqData?.status !== "success" || !Array.isArray(groqData.models)) {
-          alert(groqData?.message || "Failed to fetch Groq models. Check your Groq key and try again.");
+          showKeyStatus("error", groqData?.message || "Failed to fetch Groq models. Check your Groq key and try again.");
           return;
         }
 
@@ -1230,7 +1277,7 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
         setAddingKey(false);
         setKValue("");
         setKCustomName("");
-        alert(`Groq connected! ${newNodes.length} models from your key were added to your council.`);
+        showKeyStatus("success", `Groq connected! ${newNodes.length} models from your key were added to your council.`);
         return;
       }
 
@@ -1266,11 +1313,224 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
       setAddingKey(false);
       setKValue("");
       setKCustomName("");
-      alert("✅ API Key saved securely. Key is hashed with SHA256 and never exposed in the browser.");
+      showKeyStatus("success", "API key saved. It is masked in the UI and stored using the best available browser storage.");
     } catch (err) {
       console.warn("Failed to save BYOK.", err);
-      alert("❌ Failed to save API key. Please try again.");
+      showKeyStatus("error", "Failed to save API key. Check browser storage permissions and try again.");
     }
+  };
+
+  void handleAddKey;
+
+  const handleManagedAddKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (kIsSaving) return;
+    setKInlineError("");
+
+    const cleanKey = normalizeApiKey(kValue);
+    const validation = validateApiKey(kProvider, cleanKey);
+    if (!kModelId.trim()) {
+      setKInlineError("Model ID is required.");
+      return;
+    }
+    if (!validation.ok) {
+      setKInlineError(validation.message);
+      return;
+    }
+    if (kSavedRecord && !kConfirmReplace) {
+      setKConfirmReplace(true);
+      showKeyStatus("warning", "This will replace your existing key.");
+      return;
+    }
+
+    setKIsSaving(true);
+    try {
+      const keyHash = await hashApiKey(cleanKey);
+      const storageRecord: ApiKeyRecord = {
+        provider: kProvider,
+        modelId: kModelId,
+        displayName: kCustomName.trim() || kModelId,
+        apiKey: cleanKey,
+        savedAt: new Date().toISOString(),
+      };
+      const storageResult = await saveApiKeyRecord(kStorageKey, storageRecord);
+      if (!storageResult.ok || !storageResult.record) {
+        setKInlineError(storageResult.message);
+        showKeyStatus("error", storageResult.message);
+        return;
+      }
+      setKSavedRecord(storageResult.record);
+      setKStorageMethod(storageResult.method);
+
+      const saveNodeToBackend = async (name: string, provider: string) => {
+        const response = await fetch(`${BACKEND_URL}/api/nodes`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...getAuthHeaders()
+          } as HeadersInit,
+          body: JSON.stringify({
+            user_id: user.isAuthenticated ? (user.email ?? user.name) : "anonymous",
+            name,
+            provider,
+            address: cleanKey,
+            key_hash: keyHash
+          })
+        });
+        if (!response.ok) {
+          const detail = await response.text().catch(() => "");
+          throw new Error(detail || `Backend returned HTTP ${response.status}`);
+        }
+      };
+
+      if (kProvider === "openrouter") {
+        const orRes = await fetch(`${BACKEND_URL}/api/openrouter/models`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...getAuthHeaders()
+          } as HeadersInit,
+          body: JSON.stringify({ api_key: cleanKey, key_hash: keyHash })
+        });
+        const orData = await orRes.json().catch(() => null);
+        if (!orRes.ok || orData?.status !== "success" || !Array.isArray(orData.models)) {
+          const message = orData?.message || "Failed to fetch OpenRouter models. Check your OpenRouter key and try again.";
+          setKInlineError(message);
+          showKeyStatus("error", message);
+          return;
+        }
+        await saveNodeToBackend("openrouter-key", "openrouter");
+        const colors = ["#8B5CF6", "#EC4899", "#06B6D4", "#14B8A6", "#F97316", "#6366F1", "#EF4444", "#84CC16"];
+        const newNodes: Model[] = orData.models.slice(0, 30).map((m: any, i: number) => ({
+          id: m.id,
+          name: m.name || m.id.split("/").pop(),
+          provider: "OpenRouter",
+          hex: colors[i % colors.length],
+          tw: "bg-violet-500",
+          isCustom: true,
+          nodeAddress: cleanKey,
+          isFree: m.is_free === true,
+          pricing: m.pricing
+        }));
+        setModels(p => sortModelsByAvailability([...newNodes, ...p]));
+        setConnected(p => [
+          ...sortModelsByAvailability(newNodes).filter(m => !isPaidModel(m) && !isSpecializedNonChatModel(m)).slice(0, 3),
+          ...p
+        ]);
+        setAddingKey(false);
+        setKValue("");
+        setKCustomName("");
+        setKConfirmReplace(false);
+        showKeyStatus("success", `${storageResult.message}. OpenRouter connected with ${newNodes.length} models.`);
+        return;
+      }
+
+      if (kProvider === "groq") {
+        const groqRes = await fetch(`${BACKEND_URL}/api/groq/models`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...getAuthHeaders()
+          } as HeadersInit,
+          body: JSON.stringify({ api_key: cleanKey, key_hash: keyHash })
+        });
+        const groqData = await groqRes.json().catch(() => null);
+        if (!groqRes.ok || groqData?.status !== "success" || !Array.isArray(groqData.models)) {
+          const message = groqData?.message || "Failed to fetch Groq models. Check your Groq key and try again.";
+          setKInlineError(message);
+          showKeyStatus("error", message);
+          return;
+        }
+        await saveNodeToBackend("groq-key", "groq");
+        const colors = ["#9333EA", "#7C3AED", "#2563EB", "#0891B2", "#059669", "#D97706", "#DC2626", "#14B8A6"];
+        const newNodes: Model[] = groqData.models.map((m: any, i: number) => ({
+          id: `groq:${m.id}`,
+          name: m.name || m.id,
+          provider: "Groq Free Models",
+          hex: colors[i % colors.length],
+          tw: "bg-purple-600",
+          isCustom: true,
+          nodeAddress: cleanKey,
+          isFree: true
+        }));
+        setModels(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          return sortModelsByAvailability([...newNodes.filter(m => !existingIds.has(m.id)), ...prev]);
+        });
+        setConnected(prev => {
+          const existingIds = new Set(prev.map(p => p.id));
+          return [
+            ...sortModelsByAvailability(newNodes)
+              .filter(m => !existingIds.has(m.id) && !isPaidModel(m) && !isSpecializedNonChatModel(m))
+              .slice(0, 3),
+            ...prev
+          ];
+        });
+        setAddingKey(false);
+        setKValue("");
+        setKCustomName("");
+        setKConfirmReplace(false);
+        showKeyStatus("success", `${storageResult.message}. Groq connected with ${newNodes.length} models.`);
+        return;
+      }
+
+      await saveNodeToBackend(kModelId, kProvider);
+      const newNode: Model = {
+        id: kModelId,
+        name: kCustomName.trim() || kModelId,
+        provider: `${kProvider.toUpperCase()} BYOK`,
+        hex: "#10B981",
+        tw: "bg-emerald-500",
+        isCustom: true,
+        nodeAddress: cleanKey
+      };
+      setModels(p => sortModelsByAvailability([newNode, ...p]));
+      setConnected(p => [newNode, ...p]);
+      setAddingKey(false);
+      setKValue("");
+      setKCustomName("");
+      setKConfirmReplace(false);
+      showKeyStatus("success", storageResult.message);
+    } catch (err) {
+      console.warn("Failed to save or activate BYOK.", err);
+      const message = err instanceof Error
+        ? `The key was saved locally, but activation failed: ${err.message}. Check your connection and try again.`
+        : "The key was saved locally, but activation failed. Check your connection and try again.";
+      setKInlineError(message);
+      showKeyStatus("error", message);
+    } finally {
+      setKIsSaving(false);
+    }
+  };
+
+  const handleCopyManagedKey = async () => {
+    if (!kSavedRecord) return;
+    const result = await copyApiKey(kSavedRecord.apiKey);
+    showKeyStatus(result.ok ? "success" : "error", result.message);
+    if (result.ok) {
+      setKCopied(true);
+      window.setTimeout(() => setKCopied(false), 2000);
+    }
+  };
+
+  const handleRemoveManagedKey = () => {
+    if (!kSavedRecord) return;
+    if (!kConfirmRemove) {
+      setKConfirmRemove(true);
+      showKeyStatus("warning", "Are you sure? Press Remove key again to delete it.");
+      return;
+    }
+    const result = removeApiKeyRecord(kStorageKey);
+    if (!result.ok) {
+      showKeyStatus("error", result.message);
+      return;
+    }
+    setKSavedRecord(null);
+    setKStorageMethod(null);
+    setKValue("");
+    setKConfirmRemove(false);
+    setKConfirmReplace(false);
+    showKeyStatus("success", "Key removed");
   };
 
   // Hugging Face Hub Directory State
@@ -1521,6 +1781,33 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
                     Get a free key →
                   </a>
                 </p>
+
+                {orStatus && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      marginBottom: 10,
+                      padding: "8px 10px",
+                      borderRadius: 10,
+                      border: "1px solid",
+                      borderColor: orStatus.kind === "error" ? "rgba(239,68,68,0.35)" : "rgba(34,197,94,0.35)",
+                      background: orStatus.kind === "error" ? "rgba(239,68,68,0.08)" : "rgba(34,197,94,0.08)",
+                      color: orStatus.kind === "error" ? "#EF4444" : "#22C55E",
+                      fontSize: 12,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    <Info size={14} />
+                    <span style={{ flex: 1 }}>{orStatus.message}</span>
+                    <button type="button" aria-label="Dismiss OpenRouter message" onClick={() => setOrStatus(null)} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer" }}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
 
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--t2)", cursor: "pointer" }}>
@@ -2088,16 +2375,55 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
               <motion.div key="adding-key-modal" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 style={{ position: "absolute", inset: 0, zIndex: 50, background: "var(--bg-overlay)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
                 <motion.form initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95 }}
-                  onSubmit={handleAddKey} className="custom-key-form">
+                  onSubmit={handleManagedAddKey} className="custom-key-form">
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                     <h3 style={{ fontWeight: 700, fontSize: 17, color: "var(--t1)", display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ color: "var(--gold)" }}><Key size={20} /></span> Bring Your Own Key
                     </h3>
-                    <button type="button" onClick={() => setAddingKey(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--t3)" }}><X size={18} /></button>
+                    <button type="button" aria-label="Close API key manager" disabled={kIsSaving} onClick={() => setAddingKey(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--t3)" }}><X size={18} /></button>
                   </div>
                   <div className="warning-box">
-                    <Shield size={16} /> Keys are encrypted and stored locally against your DID. They are prioritized over AURA platform keys.
+                    <Shield size={16} /> Browser storage is not encrypted. Save API keys only on trusted devices.
                   </div>
+                  {kStatus && (
+                    <div
+                      className="warning-box"
+                      role="status"
+                      aria-live="polite"
+                      style={{
+                        marginBottom: 12,
+                        color: kStatus.kind === "error" ? "#EF4444" : kStatus.kind === "success" ? "#22C55E" : "var(--gold)",
+                        borderColor: kStatus.kind === "error" ? "rgba(239,68,68,0.3)" : kStatus.kind === "success" ? "rgba(34,197,94,0.3)" : "rgba(245,158,11,0.3)",
+                        background: kStatus.kind === "error" ? "rgba(239,68,68,0.08)" : kStatus.kind === "success" ? "rgba(34,197,94,0.08)" : "rgba(245,158,11,0.08)",
+                      }}
+                    >
+                      <Info size={16} /> <span>{kStatus.message}</span>
+                      <button type="button" aria-label="Dismiss API key message" onClick={() => setKStatus(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "inherit", cursor: "pointer" }}><X size={14} /></button>
+                    </div>
+                  )}
+
+                  {kSavedRecord && (
+                    <div style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12, marginBottom: 12, background: "var(--bg2)" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                        <span style={{ fontSize: 11, color: "#22C55E", fontWeight: 800, letterSpacing: "0.04em" }}>KEY ACTIVE</span>
+                        <span style={{ fontSize: 11, color: "var(--t3)", marginLeft: "auto" }}>
+                          Saved {new Date(kSavedRecord.savedAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <code style={{ color: "var(--t1)", fontSize: 12, overflowWrap: "anywhere" }}>{maskApiKey(kSavedRecord.apiKey)}</code>
+                        <button type="button" aria-label="Copy saved API key" className="btn-social" disabled={kIsSaving} onClick={handleCopyManagedKey} style={{ padding: "6px 10px", fontSize: 12 }}>
+                          {kCopied ? "Copied!" : "Copy"}
+                        </button>
+                        <button type="button" aria-label="Remove saved API key" className="btn-social" disabled={kIsSaving} onClick={handleRemoveManagedKey} style={{ padding: "6px 10px", fontSize: 12, color: "#EF4444" }}>
+                          {kConfirmRemove ? "Are you sure?" : "Remove key"}
+                        </button>
+                      </div>
+                      {kStorageMethod && (
+                        <div style={{ marginTop: 8, fontSize: 11, color: "var(--t3)" }}>{storageMethodMessage(kStorageMethod)}</div>
+                      )}
+                    </div>
+                  )}
 
                   <div style={{ marginBottom: 12 }}>
                     <label className="field-label">API Provider Architecture</label>
@@ -2105,6 +2431,8 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
                       value={kProvider}
                       onChange={(e) => handleProviderChange(e.target.value)}
                       className="field-input"
+                      disabled={kIsSaving}
+                      aria-label="API provider architecture"
                       style={{ padding: "8px 0", cursor: "pointer", color: "var(--t1)" }}
                     >
                       <option value="openai" style={{ color: "#000000" }}>OpenAI</option>
@@ -2119,23 +2447,39 @@ export const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps
 
                   <div style={{ marginBottom: 12 }}>
                     <label className="field-label">Exact Model ID (Editable)</label>
-                    <input required type="text" placeholder="e.g. gpt-4-turbo" value={kModelId} onChange={e => setKModelId(e.target.value)}
+                    <input required type="text" aria-label="Exact model ID" disabled={kIsSaving} placeholder="e.g. gpt-4-turbo" value={kModelId} onChange={e => setKModelId(e.target.value)}
                       className="field-input" style={{ fontFamily: "monospace", fontSize: 13 }} />
                   </div>
 
                   <div style={{ marginBottom: 12 }}>
                     <label className="field-label">Display Name (Optional)</label>
-                    <input type="text" placeholder="e.g. My Custom GPT" value={kCustomName} onChange={e => setKCustomName(e.target.value)}
+                    <input type="text" aria-label="Display name for API key" disabled={kIsSaving} placeholder="e.g. My Custom GPT" value={kCustomName} onChange={e => setKCustomName(e.target.value)}
                       className="field-input" />
                   </div>
 
                   <div style={{ marginBottom: 12 }}>
                     <label className="field-label">API Key</label>
-                    <input required type="password" placeholder={kProvider === "groq" ? "gsk_..." : "sk-..."} value={kValue} onChange={e => setKValue(e.target.value)}
-                      className="field-input" style={{ fontFamily: "monospace", fontSize: 13 }} />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input required type={kShowValue ? "text" : "password"} aria-label="API key" disabled={kIsSaving} placeholder={kProvider === "groq" ? "gsk_..." : kProvider === "anthropic" ? "sk-ant-..." : kProvider === "openrouter" ? "sk-or-..." : "sk-..."} value={kValue} onChange={e => { setKValue(e.target.value); setKInlineError(""); setKConfirmReplace(false); }}
+                        className="field-input" style={{ fontFamily: "monospace", fontSize: 13 }} />
+                      <button type="button" aria-label={kShowValue ? "Hide API key" : "Show API key"} className="btn-social" disabled={kIsSaving} onClick={() => setKShowValue(v => !v)} style={{ minWidth: 74 }}>
+                        {kShowValue ? "Hide" : "Show"}
+                      </button>
+                    </div>
+                    {kInlineError && <div role="alert" style={{ color: "#EF4444", fontSize: 12, marginTop: 6, lineHeight: 1.4 }}>{kInlineError}</div>}
+                    {kSavedRecord && kConfirmReplace && <div style={{ color: "var(--gold)", fontSize: 12, marginTop: 6 }}>This will replace your existing key. Press Update key again to confirm.</div>}
                   </div>
 
-                  <button type="submit" className="btn-dark full" style={{ marginTop: 8 }}>Save & Activate Key</button>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    <button type="submit" aria-label={kSavedRecord ? "Update and activate API key" : "Save and activate API key"} disabled={kIsSaving} className="btn-dark full" style={{ flex: 1, minWidth: 180 }}>
+                      {kIsSaving ? <><Loader2 size={14} className="animate-spin" /> Saving...</> : kSavedRecord ? "Update Key" : "Save & Activate Key"}
+                    </button>
+                    {kConfirmReplace && (
+                      <button type="button" aria-label="Cancel API key update" disabled={kIsSaving} className="btn-social" onClick={() => { setKConfirmReplace(false); setKValue(""); }}>
+                        Cancel
+                      </button>
+                    )}
+                  </div>
                 </motion.form>
               </motion.div>
             )}
@@ -2278,6 +2622,36 @@ export const ResponseCard: React.FC<{ data: CardData; onExpand: (data: CardData)
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="rc-name">{data.name}</div>
           <div className="rc-prov">{data.provider}</div>
+          {data.councilMembers && data.councilMembers.length > 1 && (
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
+              {data.councilMembers.slice(0, 6).map(member => (
+                <span
+                  key={member.id}
+                  title={member.name}
+                  style={{
+                    fontSize: 10,
+                    lineHeight: "16px",
+                    maxWidth: 120,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    padding: "0 6px",
+                    borderRadius: 999,
+                    color: "var(--t2)",
+                    background: "var(--bg3)",
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  {member.name}
+                </span>
+              ))}
+              {data.councilMembers.length > 6 && (
+                <span style={{ fontSize: 10, lineHeight: "16px", color: "var(--t3)" }}>
+                  +{data.councilMembers.length - 6}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {data.state === "loading" && <Dots color={data.hex} />}
@@ -2339,11 +2713,12 @@ interface ExpandedViewProps {
   onClose: () => void;
   onFollowUp: (cardId: string, text: string) => Promise<void>;
   onFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  userId?: string;
   uploadedFiles?: string[];
   isUploading?: boolean;
 }
 
-export const ExpandedView = React.forwardRef<HTMLDivElement, ExpandedViewProps>(({ model, onClose, onFollowUp, onFileUpload, uploadedFiles, isUploading }, ref) => {
+export const ExpandedView = React.forwardRef<HTMLDivElement, ExpandedViewProps>(({ model, onClose, onFollowUp, onFileUpload, userId = "anonymous", uploadedFiles, isUploading }, ref) => {
   const [inputText, setInputText] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showCtx, setShowCtx] = useState(false);
@@ -2360,7 +2735,7 @@ export const ExpandedView = React.forwardRef<HTMLDivElement, ExpandedViewProps>(
     if (!showCtx) return;
     const fetchPeers = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/p2p/peers`);
+        const res = await fetch(`${BACKEND_URL}/api/p2p/peers?user_id=${encodeURIComponent(userId)}`);
         if (res.ok) {
           const data = await res.json();
           setSwarmPeers(data.peers.length);
@@ -2370,7 +2745,7 @@ export const ExpandedView = React.forwardRef<HTMLDivElement, ExpandedViewProps>(
     fetchPeers();
     const int = setInterval(fetchPeers, 10000); // Poll every 10s
     return () => clearInterval(int);
-  }, [showCtx]);
+  }, [showCtx, userId]);
 
   // ── AGORA HEALING SIMULATION (JSON SCHEMA COMPLIANT) ──
   const simulateAgoraHeal = async () => {

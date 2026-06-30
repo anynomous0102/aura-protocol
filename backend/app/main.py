@@ -8,11 +8,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.enterprise.tracing import configure_tracing
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(BACKEND_ROOT / ".env", override=False)
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -24,7 +28,7 @@ logger = logging.getLogger("aura.startup")
 
 configure_tracing("aura-api-gateway")
 
-from app.api.routes import auth, chat, p2p, sentinel
+from app.api.routes import agora, auth, chat, groq, history, huggingface, nodes, oapin, openrouter, p2p, sentinel, upload
 from app.enterprise.code_healer import SentinelCodeHealerMiddleware, init_sentinel_schema
 from app.enterprise import database
 from app.enterprise.database import close_engine, init_enterprise_schema
@@ -44,7 +48,7 @@ keypool_initialized = False
 def _cors_origins() -> list[str]:
     raw = os.getenv(
         "AURA_ALLOWED_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000,https://aura-protocol.onrender.com,https://aura-protocol.vercel.app",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000,https://aura-protocol.onrender.com,https://aura-protocol.vercel.app",
     )
     return [item.strip() for item in raw.split(",") if item.strip()]
 
@@ -55,6 +59,12 @@ def _cors_origin_regex() -> str | None:
 
 def _database_fallback_enabled() -> bool:
     return os.getenv("AURA_DB_FALLBACK_TO_SQLITE", "true").lower() in {"1", "true", "yes"}
+
+
+def _strict_startup_enabled() -> bool:
+    if os.getenv("AURA_STRICT_STARTUP", "").lower() in {"1", "true", "yes"}:
+        return True
+    return os.getenv("AURA_ENVIRONMENT", "development").lower() == "production"
 
 
 async def _init_database_schemas() -> None:
@@ -105,10 +115,24 @@ async def _test_database_connection() -> None:
     global db_connected
 
     db_connected = False
-    _require_env("DATABASE_URL")
-    logger.debug("Testing database connection with configured DATABASE_URL")
-    async with database.engine.connect() as conn:
-        await conn.execute(text("SELECT 1"))
+    if not os.getenv("DATABASE_URL", "").strip() and not os.getenv("COCKROACH_DATABASE_URL", "").strip():
+        if not _database_fallback_enabled():
+            _require_env("DATABASE_URL")
+        logger.debug("DATABASE_URL is not configured; using SQLite fallback database")
+
+    try:
+        logger.debug("Testing database connection with configured database engine")
+        async with database.engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception:
+        if not _database_fallback_enabled() or not database.IS_POSTGRES:
+            raise
+        logger.warning("Configured database is unavailable; switching to SQLite fallback", exc_info=True)
+        await database.switch_to_sqlite_fallback()
+        refresh_session_factory()
+        async with database.engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+
     db_connected = True
     logger.info("Database connection test succeeded")
 
@@ -117,11 +141,13 @@ async def _test_redis_connection() -> None:
     global redis_connected
 
     redis_connected = False
-    _require_env("UPSTASH_REDIS_URL")
-    logger.debug("Testing Upstash Redis connection")
+    logger.debug("Testing Redis connection")
     await redis_runtime.connect()
     if redis_runtime.client is None:
-        raise RuntimeError("Redis client was not initialized after connect()")
+        if _strict_startup_enabled() or os.getenv("AURA_REQUIRE_REDIS", "").lower() in {"1", "true", "yes"}:
+            raise RuntimeError("Redis client was not initialized after connect()")
+        logger.warning("Redis is unavailable; continuing with local in-process fallbacks")
+        return
     await redis_runtime.client.ping()
     redis_connected = True
     logger.info("Redis connection test succeeded")
@@ -131,9 +157,18 @@ def _initialize_key_pools() -> None:
     global keypool_initialized
 
     keypool_initialized = False
-    _require_env("JWT_SECRET")
+    if not os.getenv("JWT_SECRET", "").strip():
+        if _strict_startup_enabled():
+            _require_env("JWT_SECRET")
+        logger.warning("JWT_SECRET is not configured; development auth features may be limited")
     logger.debug("Validating JWT_SECRET and provider API key pools")
-    _validate_key_pools()
+    try:
+        _validate_key_pools()
+    except RuntimeError:
+        if _strict_startup_enabled() or os.getenv("AURA_REQUIRE_PROVIDER_KEYS", "").lower() in {"1", "true", "yes"}:
+            raise
+        logger.warning("Provider API key pools are incomplete; provider calls will require BYOK or route-level keys", exc_info=True)
+        return
     keypool_initialized = True
     logger.info("KeyPool validation succeeded")
 
@@ -219,10 +254,18 @@ def create_app() -> FastAPI:
         enabled=os.getenv("AURA_SENTINEL_DIAGNOSTICS_ENABLED", "true").lower() in {"1", "true", "yes"},
     )
 
+    app.include_router(agora.router)
     app.include_router(auth.router)
     app.include_router(chat.router)
+    app.include_router(groq.router)
+    app.include_router(history.router)
+    app.include_router(huggingface.router)
+    app.include_router(nodes.router)
+    app.include_router(oapin.router)
+    app.include_router(openrouter.router)
     app.include_router(p2p.router)
     app.include_router(sentinel.router)
+    app.include_router(upload.router)
 
     @app.get("/health")
     async def health() -> dict[str, object]:
@@ -230,10 +273,19 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/debug/status")
     async def debug_status() -> dict[str, object]:
+        provider_key_counts = {
+            "openrouter": _provider_key_count("OPENROUTER_API_KEY", "OPENROUTER_DEFAULT_KEY"),
+            "gemini": _provider_key_count("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+            "mistral": _provider_key_count("MISTRAL_API_KEY"),
+            "groq": _provider_key_count("GROQ_API_KEY"),
+            "deepseek": _provider_key_count("DEEPSEEK_API_KEY"),
+            "huggingface": _provider_key_count("HUGGINGFACE_API_KEY"),
+        }
         return {
             "database": "✅" if db_connected else "❌",
             "redis": "✅" if redis_connected else "❌",
             "keys_loaded": "✅" if keypool_initialized else "❌",
+            "provider_key_counts": provider_key_counts,
             "timestamp": datetime.utcnow(),
         }
 
